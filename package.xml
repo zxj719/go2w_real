@@ -22,6 +22,7 @@
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>nav2_common</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>go2w_office_sim</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

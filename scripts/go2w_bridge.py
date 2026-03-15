@@ -3,6 +3,14 @@
 GO2W Bridge Node: bridges ROS2 cmd_vel to Unitree SDK2 SportClient,
 and publishes odometry + TF from SportModeState.
 
+Architecture: Uses Python multiprocessing to isolate SDK2 (CycloneDDS domain)
+from rclpy (CycloneDDS domain) — they CANNOT coexist in the same process.
+
+  Child process:  SDK2 ChannelFactory + SportClient + SportModeState subscriber
+  Parent process: rclpy Node (cmd_vel sub, odom/tf/imu pub)
+  IPC:            multiprocessing.Queue for odom state (child→parent)
+                  multiprocessing.Queue for cmd_vel/control (parent→child)
+
 Subscribes:
   /cmd_vel (geometry_msgs/Twist) - velocity commands from Nav2 or teleop
   /cmd_control (std_msgs/String) - mode commands: stand_up, stand_down, damp, recovery
@@ -14,32 +22,189 @@ Publishes:
 """
 
 import math
-import threading
+import multiprocessing
+import os
+import signal
+import sys
 import time
 
-import rclpy
-from rclpy.node import Node
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+LOCAL_UNITREE_SDK2_PYTHON = os.path.expanduser("~/ros2_ws/src/unitree_sdk2_python")
+if os.path.isdir(LOCAL_UNITREE_SDK2_PYTHON) and LOCAL_UNITREE_SDK2_PYTHON not in sys.path:
+    sys.path.insert(0, LOCAL_UNITREE_SDK2_PYTHON)
 
-from geometry_msgs.msg import Twist, TransformStamped, Quaternion
-from nav_msgs.msg import Odometry
-from sensor_msgs.msg import Imu
-from std_msgs.msg import String
-import tf2_ros
 
-from unitree_sdk2py.core.channel import (
-    ChannelSubscriber,
-    ChannelFactoryInitialize,
+DEFAULT_STATE_TOPICS = (
+    "rt/lf/sportmodestate",  # GO2W
+    "rt/sportmodestate",     # GO2 / older examples
 )
-from unitree_sdk2py.idl.default import unitree_go_msg_dds__SportModeState_
-from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
-from unitree_sdk2py.go2.sport.sport_client import SportClient
+NO_STATE_WARN_PERIOD = 5.0
 
 
-def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> Quaternion:
+def _normalize_network_interface(net_iface: str):
+    """Return None when SDK2 should auto-select the network interface."""
+    if net_iface is None:
+        return None
+
+    normalized = net_iface.strip()
+    if not normalized or normalized.lower() == "auto":
+        return None
+
+    return normalized
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SDK2 child process — runs in its own CycloneDDS domain
+# ═══════════════════════════════════════════════════════════════════════
+
+def _sdk2_worker(
+    net_iface: str,
+    state_queue: multiprocessing.Queue,
+    cmd_queue: multiprocessing.Queue,
+    shutdown_event: multiprocessing.Event,
+):
+    """
+    Runs in a child process. Initializes SDK2, subscribes to SportModeState,
+    and forwards commands from cmd_queue to SportClient.
+    """
+    from unitree_sdk2py.core.channel import (
+        ChannelSubscriber,
+        ChannelFactoryInitialize,
+    )
+    from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+    from unitree_sdk2py.go2.sport.sport_client import SportClient
+
+    # Ignore SIGINT in child — parent handles it
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    resolved_iface = _normalize_network_interface(net_iface)
+    iface_label = resolved_iface or "auto"
+    print(
+        f"[go2w_bridge] SDK2 worker initializing on interface: {iface_label}",
+        flush=True,
+    )
+
+    try:
+        ChannelFactoryInitialize(0, resolved_iface)
+    except Exception as exc:
+        print(
+            f"[go2w_bridge] SDK2 ChannelFactory init failed on interface "
+            f"{iface_label}: {exc}",
+            flush=True,
+        )
+        return
+
+    sport_client = SportClient()
+    sport_client.SetTimeout(10.0)
+    sport_client.Init()
+
+    latest_state = None
+    first_state_topic = None
+    state_lock = multiprocessing.Lock()
+
+    def _state_cb(msg: SportModeState_, topic_name: str):
+        nonlocal first_state_topic, latest_state
+        with state_lock:
+            latest_state = msg
+            if first_state_topic is None:
+                first_state_topic = topic_name
+                print(
+                    f"[go2w_bridge] Received first SportModeState on "
+                    f"{topic_name}",
+                    flush=True,
+                )
+
+    print(
+        "[go2w_bridge] Subscribing SportModeState topics: "
+        + ", ".join(DEFAULT_STATE_TOPICS),
+        flush=True,
+    )
+    state_subs = []
+    for topic_name in DEFAULT_STATE_TOPICS:
+        sub = ChannelSubscriber(topic_name, SportModeState_)
+        sub.Init(lambda msg, topic_name=topic_name: _state_cb(msg, topic_name), 10)
+        state_subs.append(sub)
+
+    last_cmd_time = time.time()
+    CMD_TIMEOUT = 0.5
+    next_no_state_warn = time.time() + NO_STATE_WARN_PERIOD
+
+    while not shutdown_event.is_set():
+        # Forward odom state to parent (non-blocking, drop old if full)
+        with state_lock:
+            st = latest_state
+
+        if st is not None:
+            odom_data = {
+                "pos": [float(st.position[0]), float(st.position[1]), float(st.position[2])],
+                "rpy": [float(st.imu_state.rpy[0]), float(st.imu_state.rpy[1]), float(st.imu_state.rpy[2])],
+                "vel": [float(st.velocity[0]), float(st.velocity[1]), float(st.velocity[2])],
+                "yaw_speed": float(st.yaw_speed),
+                "gyro": [float(st.imu_state.gyroscope[0]), float(st.imu_state.gyroscope[1]), float(st.imu_state.gyroscope[2])],
+                "accel": [float(st.imu_state.accelerometer[0]), float(st.imu_state.accelerometer[1]), float(st.imu_state.accelerometer[2])],
+            }
+            try:
+                # Drop stale data — keep only latest
+                while not state_queue.empty():
+                    try:
+                        state_queue.get_nowait()
+                    except Exception:
+                        break
+                state_queue.put_nowait(odom_data)
+            except Exception:
+                pass
+        elif time.time() >= next_no_state_warn:
+            print(
+                "[go2w_bridge] Waiting for SportModeState; /odom and odom->base "
+                "TF will not be published until a state packet arrives. "
+                "Checked topics: "
+                + ", ".join(DEFAULT_STATE_TOPICS),
+                flush=True,
+            )
+            next_no_state_warn = time.time() + NO_STATE_WARN_PERIOD
+
+        # Process incoming commands from parent
+        while True:
+            try:
+                cmd = cmd_queue.get_nowait()
+            except Exception:
+                break
+
+            cmd_type = cmd.get("type")
+            if cmd_type == "move":
+                sport_client.Move(cmd["vx"], cmd["vy"], cmd["vyaw"])
+                last_cmd_time = time.time()
+            elif cmd_type == "control":
+                action = cmd["action"]
+                if action == "stand_up":
+                    sport_client.StandUp()
+                elif action == "stand_down":
+                    sport_client.StandDown()
+                elif action == "damp":
+                    sport_client.Damp()
+                elif action == "recovery":
+                    sport_client.RecoveryStand()
+                elif action == "balance":
+                    sport_client.BalanceStand()
+                elif action == "stop":
+                    sport_client.StopMove()
+
+        # Safety: stop if no cmd_vel received within timeout
+        if time.time() - last_cmd_time > CMD_TIMEOUT:
+            sport_client.Move(0.0, 0.0, 0.0)
+
+        time.sleep(0.02)  # ~50 Hz loop
+
+    # Clean shutdown
+    sport_client.StopMove()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ROS2 parent process
+# ═══════════════════════════════════════════════════════════════════════
+
+def euler_to_quaternion(roll: float, pitch: float, yaw: float):
     """Convert euler angles to geometry_msgs Quaternion."""
+    from geometry_msgs.msg import Quaternion
     cr, sr = math.cos(roll / 2), math.sin(roll / 2)
     cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
     cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
@@ -51,196 +216,188 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> Quaternion:
     return q
 
 
-class Go2wBridge(Node):
-    def __init__(self):
-        super().__init__("go2w_bridge")
+def main(args=None):
+    import rclpy
+    from rclpy.node import Node
+    from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+    from rclpy.executors import MultiThreadedExecutor
 
-        # Parameters
-        self.declare_parameter("network_interface", "eth0")
-        self.declare_parameter("cmd_vel_timeout", 0.5)
-        self.declare_parameter("odom_frame", "odom")
-        self.declare_parameter("base_frame", "base")
-        self.declare_parameter("publish_odom_tf", True)
+    from geometry_msgs.msg import Twist, TransformStamped
+    from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import Imu
+    from std_msgs.msg import String
+    import tf2_ros
 
-        net_iface = self.get_parameter("network_interface").value
-        self.cmd_vel_timeout = self.get_parameter("cmd_vel_timeout").value
-        self.odom_frame = self.get_parameter("odom_frame").value
-        self.base_frame = self.get_parameter("base_frame").value
-        self.publish_odom_tf = self.get_parameter("publish_odom_tf").value
+    # ── Parse network_interface from args BEFORE rclpy.init ───────────
+    # We need to fork SDK2 worker before rclpy touches CycloneDDS.
+    # Default to auto-detect; override via --ros-args -p network_interface:=xxx
+    net_iface = ""
+    if args is None:
+        import sys as _sys
+        _argv = _sys.argv[1:]
+    else:
+        _argv = list(args)
+    for i, a in enumerate(_argv):
+        if "network_interface:=" in a:
+            net_iface = a.split(":=", 1)[1]
+            break
 
-        # State
-        self.last_cmd_vel_time = time.time()
-        self.latest_twist = Twist()
-        self.lock = threading.Lock()
+    # IPC queues
+    state_queue = multiprocessing.Queue(maxsize=2)
+    cmd_queue = multiprocessing.Queue(maxsize=50)
+    shutdown_event = multiprocessing.Event()
 
-        # Initialize Unitree SDK2
-        self.get_logger().info(f"Initializing Unitree SDK on interface: {net_iface}")
-        ChannelFactoryInitialize(0, net_iface)
+    # Start SDK2 child process BEFORE rclpy.init() to avoid
+    # CycloneDDS domain conflict (fork inherits parent's DDS state)
+    iface_label = _normalize_network_interface(net_iface) or "auto"
+    print(
+        f"[go2w_bridge] Starting SDK2 worker on interface: {iface_label}",
+        flush=True,
+    )
+    sdk_proc = multiprocessing.Process(
+        target=_sdk2_worker,
+        args=(net_iface, state_queue, cmd_queue, shutdown_event),
+        daemon=True,
+    )
+    sdk_proc.start()
+    print(f"[go2w_bridge] SDK2 worker started (PID {sdk_proc.pid})", flush=True)
 
-        # SportClient for sending commands
-        self.sport_client = SportClient()
-        self.sport_client.SetTimeout(10.0)
-        self.sport_client.Init()
-        self.get_logger().info("SportClient initialized")
+    # Now safe to initialize ROS2 (creates its own CycloneDDS domain)
+    rclpy.init(args=args)
 
-        # Subscribe to SportModeState for odometry
-        self.sport_state = None
-        self.sport_state_lock = threading.Lock()
-        self.state_sub = ChannelSubscriber(
-            "rt/sportmodestate", SportModeState_
-        )
-        self.state_sub.Init(self._sport_state_callback, 10)
+    node = Node("go2w_bridge")
 
-        # Callback groups
-        cmd_cb_group = MutuallyExclusiveCallbackGroup()
-        timer_cb_group = MutuallyExclusiveCallbackGroup()
-        odom_cb_group = MutuallyExclusiveCallbackGroup()
+    # Parameters (for logging; net_iface already parsed above)
+    node.declare_parameter("network_interface", net_iface)
+    node.declare_parameter("cmd_vel_timeout", 0.5)
+    node.declare_parameter("odom_frame", "odom")
+    node.declare_parameter("base_frame", "base")
+    node.declare_parameter("publish_odom_tf", True)
 
-        # ROS2 subscribers
-        self.cmd_vel_sub = self.create_subscription(
-            Twist,
-            "cmd_vel",
-            self._cmd_vel_callback,
-            10,
-            callback_group=cmd_cb_group,
-        )
-        self.cmd_control_sub = self.create_subscription(
-            String,
-            "cmd_control",
-            self._cmd_control_callback,
-            10,
-            callback_group=cmd_cb_group,
-        )
+    odom_frame = node.get_parameter("odom_frame").value
+    base_frame = node.get_parameter("base_frame").value
+    publish_odom_tf = node.get_parameter("publish_odom_tf").value
 
-        # ROS2 publishers
-        self.odom_pub = self.create_publisher(Odometry, "odom", 10)
-        self.imu_pub = self.create_publisher(Imu, "imu/data", 10)
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+    node.get_logger().info(
+        f"SDK2 worker PID {sdk_proc.pid}, interface: {iface_label}"
+    )
 
-        # Timers
-        # Send velocity to robot at 20 Hz
-        self.cmd_timer = self.create_timer(
-            0.05, self._cmd_timer_callback, callback_group=timer_cb_group
-        )
-        # Publish odom at 50 Hz
-        self.odom_timer = self.create_timer(
-            0.02, self._odom_timer_callback, callback_group=odom_cb_group
-        )
+    # Publishers
+    odom_pub = node.create_publisher(Odometry, "odom", 10)
+    imu_pub = node.create_publisher(Imu, "imu/data", 10)
+    tf_broadcaster = tf2_ros.TransformBroadcaster(node)
 
-        self.get_logger().info("GO2W Bridge ready. Waiting for cmd_vel...")
+    # Callback groups
+    cmd_cb_group = MutuallyExclusiveCallbackGroup()
+    odom_cb_group = MutuallyExclusiveCallbackGroup()
 
-    def _sport_state_callback(self, msg: SportModeState_):
-        """SDK callback (runs in SDK thread). Just store the latest state."""
-        with self.sport_state_lock:
-            self.sport_state = msg
+    # cmd_vel subscriber
+    def _cmd_vel_cb(msg: Twist):
+        try:
+            cmd_queue.put_nowait({
+                "type": "move",
+                "vx": msg.linear.x,
+                "vy": msg.linear.y,
+                "vyaw": msg.angular.z,
+            })
+        except Exception:
+            pass
 
-    def _cmd_vel_callback(self, msg: Twist):
-        """ROS2 cmd_vel subscriber callback."""
-        with self.lock:
-            self.latest_twist = msg
-            self.last_cmd_vel_time = time.time()
+    node.create_subscription(
+        Twist, "cmd_vel", _cmd_vel_cb, 10, callback_group=cmd_cb_group
+    )
 
-    def _cmd_control_callback(self, msg: String):
-        """Handle mode-switching commands."""
-        cmd = msg.data.strip().lower()
-        self.get_logger().info(f"Control command: {cmd}")
+    # cmd_control subscriber
+    def _cmd_control_cb(msg: String):
+        action = msg.data.strip().lower()
+        node.get_logger().info(f"Control command: {action}")
+        try:
+            cmd_queue.put_nowait({"type": "control", "action": action})
+        except Exception:
+            pass
 
-        if cmd == "stand_up":
-            self.sport_client.StandUp()
-        elif cmd == "stand_down":
-            self.sport_client.StandDown()
-        elif cmd == "damp":
-            self.sport_client.Damp()
-        elif cmd == "recovery":
-            self.sport_client.RecoveryStand()
-        elif cmd == "balance":
-            self.sport_client.BalanceStand()
-        elif cmd == "stop":
-            self.sport_client.StopMove()
-        else:
-            self.get_logger().warn(f"Unknown control command: {cmd}")
+    node.create_subscription(
+        String, "cmd_control", _cmd_control_cb, 10, callback_group=cmd_cb_group
+    )
 
-    def _cmd_timer_callback(self):
-        """Send velocity command to robot at fixed rate."""
-        with self.lock:
-            twist = self.latest_twist
-            elapsed = time.time() - self.last_cmd_vel_time
+    # Odom timer: read state from SDK2 child and publish
+    next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+    sdk_proc_dead_logged = False
 
-        # Safety: stop if no cmd_vel received within timeout
-        if elapsed > self.cmd_vel_timeout:
-            vx, vy, vyaw = 0.0, 0.0, 0.0
-        else:
-            vx = twist.linear.x
-            vy = twist.linear.y
-            vyaw = twist.angular.z
-
-        self.sport_client.Move(vx, vy, vyaw)
-
-    def _odom_timer_callback(self):
-        """Publish odometry from SportModeState."""
-        with self.sport_state_lock:
-            state = self.sport_state
-
-        if state is None:
+    def _odom_timer_cb():
+        nonlocal next_no_state_warn, sdk_proc_dead_logged
+        if not sdk_proc.is_alive():
+            if not sdk_proc_dead_logged:
+                node.get_logger().error(
+                    "SDK2 worker exited; /odom and odom->base TF are unavailable."
+                )
+                sdk_proc_dead_logged = True
             return
 
-        now = self.get_clock().now().to_msg()
+        try:
+            odom_data = state_queue.get_nowait()
+        except Exception:
+            if time.monotonic() >= next_no_state_warn:
+                node.get_logger().warn(
+                    "Still waiting for SportModeState; /odom and odom->base TF "
+                    "are not being published yet."
+                )
+                next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+            return
 
-        # Build Odometry message
+        next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+
+        now = node.get_clock().now().to_msg()
+
+        # Odometry
         odom = Odometry()
         odom.header.stamp = now
-        odom.header.frame_id = self.odom_frame
-        odom.child_frame_id = self.base_frame
+        odom.header.frame_id = odom_frame
+        odom.child_frame_id = base_frame
 
-        # Position from state (state.position is [x, y, z])
-        odom.pose.pose.position.x = float(state.position[0])
-        odom.pose.pose.position.y = float(state.position[1])
-        odom.pose.pose.position.z = float(state.position[2])
+        odom.pose.pose.position.x = odom_data["pos"][0]
+        odom.pose.pose.position.y = odom_data["pos"][1]
+        odom.pose.pose.position.z = odom_data["pos"][2]
 
-        # Orientation from IMU state (state.imu_state.rpy is [roll, pitch, yaw])
-        roll = float(state.imu_state.rpy[0])
-        pitch = float(state.imu_state.rpy[1])
-        yaw = float(state.imu_state.rpy[2])
+        roll, pitch, yaw = odom_data["rpy"]
         odom.pose.pose.orientation = euler_to_quaternion(roll, pitch, yaw)
 
-        # Velocity (state.velocity is [vx, vy, vz] in body frame)
-        odom.twist.twist.linear.x = float(state.velocity[0])
-        odom.twist.twist.linear.y = float(state.velocity[1])
-        odom.twist.twist.linear.z = float(state.velocity[2])
-        odom.twist.twist.angular.z = float(state.yaw_speed)
+        odom.twist.twist.linear.x = odom_data["vel"][0]
+        odom.twist.twist.linear.y = odom_data["vel"][1]
+        odom.twist.twist.linear.z = odom_data["vel"][2]
+        odom.twist.twist.angular.z = odom_data["yaw_speed"]
 
-        self.odom_pub.publish(odom)
+        odom_pub.publish(odom)
 
-        # Publish TF: odom -> base
-        if self.publish_odom_tf:
+        # TF: odom -> base
+        if publish_odom_tf:
             t = TransformStamped()
             t.header.stamp = now
-            t.header.frame_id = self.odom_frame
-            t.child_frame_id = self.base_frame
-            t.transform.translation.x = odom.pose.pose.position.x
-            t.transform.translation.y = odom.pose.pose.position.y
-            t.transform.translation.z = odom.pose.pose.position.z
+            t.header.frame_id = odom_frame
+            t.child_frame_id = base_frame
+            t.transform.translation.x = odom_data["pos"][0]
+            t.transform.translation.y = odom_data["pos"][1]
+            t.transform.translation.z = odom_data["pos"][2]
             t.transform.rotation = odom.pose.pose.orientation
-            self.tf_broadcaster.sendTransform(t)
+            tf_broadcaster.sendTransform(t)
 
-        # Publish IMU
+        # IMU
         imu_msg = Imu()
         imu_msg.header.stamp = now
         imu_msg.header.frame_id = "imu"
         imu_msg.orientation = euler_to_quaternion(roll, pitch, yaw)
-        # Quaternion from IMU (state.imu_state.quaternion is [w, x, y, z])
-        imu_msg.angular_velocity.x = float(state.imu_state.gyroscope[0])
-        imu_msg.angular_velocity.y = float(state.imu_state.gyroscope[1])
-        imu_msg.angular_velocity.z = float(state.imu_state.gyroscope[2])
-        imu_msg.linear_acceleration.x = float(state.imu_state.accelerometer[0])
-        imu_msg.linear_acceleration.y = float(state.imu_state.accelerometer[1])
-        imu_msg.linear_acceleration.z = float(state.imu_state.accelerometer[2])
-        self.imu_pub.publish(imu_msg)
+        imu_msg.angular_velocity.x = odom_data["gyro"][0]
+        imu_msg.angular_velocity.y = odom_data["gyro"][1]
+        imu_msg.angular_velocity.z = odom_data["gyro"][2]
+        imu_msg.linear_acceleration.x = odom_data["accel"][0]
+        imu_msg.linear_acceleration.y = odom_data["accel"][1]
+        imu_msg.linear_acceleration.z = odom_data["accel"][2]
+        imu_pub.publish(imu_msg)
 
+    node.create_timer(0.02, _odom_timer_cb, callback_group=odom_cb_group)
 
-def main(args=None):
-    rclpy.init(args=args)
-    node = Go2wBridge()
+    node.get_logger().info("GO2W Bridge ready (multiprocessing). Waiting for cmd_vel...")
+
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:
@@ -248,9 +405,11 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # Stop robot on shutdown
-        node.get_logger().info("Shutting down, stopping robot...")
-        node.sport_client.StopMove()
+        node.get_logger().info("Shutting down, stopping SDK2 worker...")
+        shutdown_event.set()
+        sdk_proc.join(timeout=3.0)
+        if sdk_proc.is_alive():
+            sdk_proc.terminate()
         node.destroy_node()
         rclpy.shutdown()
 

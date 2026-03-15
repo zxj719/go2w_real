@@ -1,0 +1,18 @@
+# Laser scan filter chain for GO2W real robot.
+# Removes self-occlusion from lidar hitting robot body/legs.
+
+scan_to_scan_filter_chain:
+  ros__parameters:
+    use_sim_time: false
+    filter1:
+      type: laser_filters/LaserScanBoxFilter
+      name: robot_body_filter
+      params:
+        box_frame: lidar
+        min_x: -0.6
+        max_x: 0.0
+        min_y: -0.22
+        max_y: 0.22
+        min_z: -1.0
+        max_z: 1.0
+        invert: false

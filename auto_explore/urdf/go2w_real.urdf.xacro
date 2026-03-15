@@ -1,0 +1,236 @@
+<?xml version="1.0"?>
+<!--
+  GO2W URDF for real robot (no Gazebo plugins).
+  Uses local const.xacro and meshes so the package is standalone.
+  Only provides TF tree: base -> body -> legs/sensors
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="go2w">
+  <xacro:include filename="$(find go2w_auto_explore)/urdf/const.xacro"/>
+
+  <xacro:property name="mesh_prefix" value="file://$(find go2w_auto_explore)/meshes" />
+
+  <!-- Leg macro: same as sim but no gazebo friction tags -->
+  <xacro:macro name="leg" params="prefix front left">
+
+    <xacro:if value="${(front == True)}">
+        <xacro:property name="front_sign" value=" 1" />
+    </xacro:if>
+    <xacro:if value="${(front == False)}">
+        <xacro:property name="front_sign" value="-1" />
+    </xacro:if>
+    <xacro:if value="${(left == True)}">
+        <xacro:property name="left_sign" value=" 1" />
+    </xacro:if>
+    <xacro:if value="${(left == False)}">
+        <xacro:property name="left_sign" value="-1" />
+    </xacro:if>
+
+    <link name="${prefix}_hip">
+      <inertial>
+        <origin xyz="${hip_com_x*front_sign} ${hip_com_y*left_sign} ${hip_com_z}" rpy="0 0 0" />
+        <mass value="${hip_mass}" />
+        <inertia ixx="${hip_ixx}" ixy="${hip_ixy*left_sign*front_sign}" ixz="${hip_ixz*front_sign}" iyy="${hip_iyy}" iyz="${hip_iyz*left_sign}" izz="${hip_izz}" />
+      </inertial>
+      <visual>
+        <xacro:if value="${(left == True) and (front == True)}">
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+        </xacro:if>
+        <xacro:if value="${(left == False) and (front == True)}">
+            <origin rpy="${PI} 0 0" xyz="0 0 0"/>
+        </xacro:if>
+        <xacro:if value="${(left == True) and (front == False)}">
+            <origin rpy="0 ${PI} 0" xyz="0 0 0"/>
+        </xacro:if>
+        <xacro:if value="${(left == False) and (front == False)}">
+            <origin rpy="${PI} ${PI} 0" xyz="0 0 0"/>
+        </xacro:if>
+        <geometry>
+          <mesh filename="${mesh_prefix}/hip.dae" />
+        </geometry>
+      </visual>
+    </link>
+    <joint name="${prefix}_hip_joint" type="fixed">
+      <origin xyz="${hip_offset_x*front_sign} ${hip_offset_y*left_sign} ${hip_offset_z}" rpy="${hip_init_position} 0 0" />
+      <parent link="body" />
+      <child link="${prefix}_hip" />
+    </joint>
+
+    <link name="${prefix}_thigh">
+      <inertial>
+        <origin xyz="${thigh_com_x} ${thigh_com_y*left_sign} ${thigh_com_z}" rpy="0 0 0" />
+        <mass value="${thigh_mass}" />
+        <inertia ixx="${thigh_ixx}" ixy="${thigh_ixy*left_sign}" ixz="${thigh_ixz}" iyy="${thigh_iyy}" iyz="${thigh_iyz*left_sign}" izz="${thigh_izz}" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <xacro:if value="${left == True}">
+              <mesh filename="${mesh_prefix}/thigh.dae" scale="1 1 1"/>
+          </xacro:if>
+          <xacro:if value="${left == False}">
+              <mesh filename="${mesh_prefix}/thigh_mirror.dae" scale="1 1 1"/>
+          </xacro:if>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="${prefix}_thigh_joint" type="fixed">
+      <origin xyz="${thigh_offset_x} ${thigh_offset_y*left_sign} ${thigh_offset_z}" rpy="0 ${thigh_init_position} 0" />
+      <parent link="${prefix}_hip" />
+      <child link="${prefix}_thigh" />
+    </joint>
+
+    <link name="${prefix}_calf">
+      <inertial>
+        <origin xyz="${calf_com_x} ${calf_com_y*left_sign} ${calf_com_z}" rpy="0 0 0" />
+        <mass value="${calf_mass}" />
+        <inertia ixx="${calf_ixx}" ixy="${calf_ixy*left_sign}" ixz="${calf_ixz}" iyy="${calf_iyy}" iyz="${calf_iyz*left_sign}" izz="${calf_izz}" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+            <xacro:if value="${left == True}">
+              <mesh filename="${mesh_prefix}/calf.stl" />
+            </xacro:if>
+            <xacro:if value="${left == False}">
+              <mesh filename="${mesh_prefix}/calf_mirror.stl" />
+            </xacro:if>
+        </geometry>
+        <material name="">
+          <color rgba="1 1 1 1" />
+        </material>
+      </visual>
+    </link>
+    <joint name="${prefix}_calf_joint" type="fixed">
+      <origin xyz="${calf_offset_x} ${calf_offset_y*left_sign} ${calf_offset_z}" rpy="0 ${calf_init_position} 0" />
+      <parent link="${prefix}_thigh" />
+      <child link="${prefix}_calf" />
+    </joint>
+
+    <link name="${prefix}_foot">
+      <inertial>
+        <origin xyz="${foot_com_x} ${foot_com_y} ${foot_com_z}" rpy="0 0 0" />
+        <mass value="${foot_mass}" />
+        <inertia ixx="${foot_ixx}" ixy="${foot_ixy}" ixz="${foot_ixz}" iyy="${foot_iyy}" iyz="${foot_iyz}" izz="${foot_izz}" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+            <xacro:if value="${left == True}">
+            <mesh filename="${mesh_prefix}/left_wheel.dae" />
+            </xacro:if>
+            <xacro:if value="${left == False}">
+            <mesh filename="${mesh_prefix}/right_wheel.dae" />
+            </xacro:if>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="${prefix}_foot_joint" type="continuous">
+      <origin xyz="${foot_offset_x} ${foot_offset_y*left_sign} ${foot_offset_z}" rpy="0 0 0" />
+      <parent link="${prefix}_calf" />
+      <child link="${prefix}_foot" />
+      <axis xyz="0 1 0" />
+    </joint>
+
+  </xacro:macro>
+
+  <!-- Base -->
+  <link name="base"/>
+
+  <!-- Body -->
+  <link name="body">
+    <inertial>
+      <origin xyz="${body_com_x} ${body_com_y} ${body_com_z}" rpy="0 0 0" />
+      <mass value="${body_mass}" />
+      <inertia ixx="${body_ixx}" ixy="${body_ixy}" ixz="${body_ixz}" iyy="${body_iyy}" iyz="${body_iyz}" izz="${body_izz}" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh_prefix}/base.dae" />
+      </geometry>
+    </visual>
+  </link>
+  <joint name="body_joint" type="fixed">
+    <parent link="base" />
+    <child link="body" />
+  </joint>
+
+  <!-- Head Upper -->
+  <link name="Head_upper">
+    <inertial>
+      <origin xyz="${head_upper_com_x} ${head_upper_com_y} ${head_upper_com_z}" rpy="0 0 0" />
+      <mass value="${head_upper_mass}" />
+      <inertia ixx="${head_upper_ixx}" ixy="${head_upper_ixy}" ixz="${head_upper_ixz}" iyy="${head_upper_iyy}" iyz="${head_upper_iyz}" izz="${head_upper_izz}" />
+    </inertial>
+  </link>
+  <joint name="Head_upper_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0.285 0 0.01" rpy="0 0 0" />
+    <parent link="body" />
+    <child link="Head_upper" />
+  </joint>
+
+  <!-- Head Lower -->
+  <link name="Head_lower">
+    <inertial>
+      <origin xyz="${head_lower_com_x} ${head_lower_com_y} ${head_lower_com_z}" rpy="0 0 0" />
+      <mass value="${head_lower_mass}" />
+      <inertia ixx="${head_lower_ixx}" ixy="${head_lower_ixy}" ixz="${head_lower_ixz}" iyy="${head_lower_iyy}" iyz="${head_lower_iyz}" izz="${head_lower_izz}" />
+    </inertial>
+  </link>
+  <joint name="Head_lower_joint" type="fixed" dont_collapse="true">
+    <origin xyz="0.008 0 -0.07" rpy="0 0 0" />
+    <parent link="Head_upper" />
+    <child link="Head_lower" />
+  </joint>
+
+  <!-- Legs -->
+  <xacro:leg prefix="FL" front="True" left="True"/>
+  <xacro:leg prefix="FR" front="True" left="False"/>
+  <xacro:leg prefix="RL" front="False" left="True"/>
+  <xacro:leg prefix="RR" front="False" left="False"/>
+
+  <!-- IMU link -->
+  <link name="imu">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="-0.02557 0 0.04232" rpy="0 0 0" />
+    <parent link="body" />
+    <child link="imu" />
+  </joint>
+
+  <!-- LiDAR link -->
+  <link name="lidar">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <origin xyz="0.28945 0 -0.046825" rpy="0 0 0" />
+    <parent link="body" />
+    <child link="lidar" />
+  </joint>
+
+  <!-- Camera link -->
+  <link name="camera">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.325 0 0.043" rpy="0 0 0" />
+    <parent link="body" />
+    <child link="camera" />
+  </joint>
+
+  <!-- No Gazebo plugins - all sensing/actuation via go2w_bridge node -->
+
+</robot>

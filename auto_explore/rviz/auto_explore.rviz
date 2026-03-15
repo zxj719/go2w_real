@@ -1,0 +1,163 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: false
+      Value: false
+      Cell Size: 1
+      Color: 160; 160; 164
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Value: true
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+
+    - Class: rviz_default_plugins/Map
+      Name: OccupancyGrid
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /scan
+      Size (Pixels): 3
+      Size (m): 0.03
+      Style: Flat Squares
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+      Decay Time: 0
+      Queue Size: 1
+
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Frontiers
+      Enabled: true
+      Value: true
+      Marker Topic:
+        Value: /explore/frontiers
+
+    - Class: rviz_default_plugins/MarkerArray
+      Name: GVD
+      Enabled: true
+      Value: true
+      Marker Topic:
+        Value: /explore/gvd
+
+    - Class: rviz_default_plugins/MarkerArray
+      Name: GVD_Path
+      Enabled: true
+      Value: true
+      Marker Topic:
+        Value: /explore/gvd_path
+
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /global_costmap/costmap
+      Alpha: 0.4
+      Color Scheme: costmap
+      Draw Behind: false
+
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /local_costmap/costmap
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+
+    - Class: rviz_default_plugins/Path
+      Name: NavPlan
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /plan
+      Color: 0; 255; 0
+      Line Style:
+        Value: Lines
+      Width: 0.03
+
+    - Class: rviz_default_plugins/Path
+      Name: LocalPlan
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /local_plan
+      Color: 255; 255; 0
+      Line Style:
+        Value: Lines
+      Width: 0.02
+
+    - Class: rviz_default_plugins/Odometry
+      Name: SlamOdom
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /odom
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Keep: 200
+      Shape:
+        Value: Arrow
+        Color: 255; 0; 127
+        Length: 0.3
+        Radius: 0.06
+
+    - Class: rviz_default_plugins/PointCloud2
+      Name: SlamMappingPoints
+      Enabled: false
+      Value: false
+      Topic:
+        Value: /unitree/slam_mapping/points
+      Size (Pixels): 2
+      Size (m): 0.03
+      Style: Flat Squares
+      Color Transformer: FlatColor
+      Color: 90; 220; 255
+      Decay Time: 0
+
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 15
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: TopDownOrtho
+      Distance: 25
+      X: 0
+      Y: 0
+Window Geometry:
+  Width: 1500
+  Height: 950
+  Displays:
+    collapsed: false
+  Views:
+    collapsed: false

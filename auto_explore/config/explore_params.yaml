@@ -1,0 +1,28 @@
+# Frontier explorer C++ parameters for GO2W real robot
+# Adapted from go2w_office_sim/config/frontier_explorer_params.yaml
+# Key: robot_base_frame is 'base' (not 'base_link' as in sim)
+
+frontier_explorer:
+  ros__parameters:
+    planner_frequency: 0.2          # Hz (conservative for Jetson)
+    robot_base_frame: base
+    odom_frame: odom
+    odom_topic: /odom
+    global_frame: map
+    transform_tolerance: 2.0        # seconds
+    min_frontier_size: 20           # cells (filter tiny clusters)
+    clearance_scale: 0.2            # GVD clearance tiebreaker weight
+    progress_timeout: 30.0          # seconds before cancelling stuck goal
+    blacklist_timeout: 120.0        # seconds before blacklist entry expires
+    blacklist_radius: 0.5           # metres
+    return_to_init: false
+    visualize: true
+    visualize_gvd: true
+    gvd_min_clearance: 5            # cells min obstacle distance for GVD
+    gvd_snap_radius: 1.0            # metres max snap search
+    gvd_marker_publish_every: 3     # publish GVD markers every Nth tick
+    gvd_marker_stride: 2            # render every Nth GVD edge
+    profile_timing: true
+    profile_log_interval: 10.0
+    profile_callbacks: true
+    profile_callback_log_interval: 10.0

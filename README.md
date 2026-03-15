@@ -105,6 +105,15 @@ ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
 # Set 2D Goal in RViz to navigate
 ```
 
+### 3. Official Unitree SLAM + Nav2 (no slam_toolbox)
+
+If official Unitree SLAM is already running on the robot and publishing:
+`/global_map`, `/unitree/slam_mapping/odom`, `/unitree/slam_lidar/points`
+
+```bash
+ros2 launch go2w_real nav2_official_slam.launch.py network_interface:=eth0
+```
+
 ### 3. Control Commands
 
 ```bash

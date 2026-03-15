@@ -9,6 +9,7 @@ install(DIRECTORY config launch urdf
 
 install(PROGRAMS
   scripts/go2w_bridge.py
+  scripts/official_slam_odom_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
