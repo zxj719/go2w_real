@@ -18,8 +18,14 @@ if(DEFINED ENV{ROS_DISTRO})
   endif()
 endif()
 
-add_executable(frontier_explorer src/frontier_explorer.cpp)
+add_executable(
+  frontier_explorer
+  src/frontier_explorer.cpp
+  src/frontier_search.cpp
+  src/gvd_map.cpp
+)
 target_compile_features(frontier_explorer PUBLIC cxx_std_17)
+target_include_directories(frontier_explorer PUBLIC include)
 if(ROS_FOXY_COMPAT)
   target_compile_definitions(frontier_explorer PRIVATE ROS_FOXY_COMPAT=1)
 endif()
@@ -35,7 +41,7 @@ ament_target_dependencies(
   visualization_msgs
 )
 
-install(DIRECTORY config launch rviz urdf meshes
+install(DIRECTORY config launch rviz urdf meshes include
   DESTINATION share/${PROJECT_NAME}
 )
 
