@@ -21,32 +21,28 @@ from launch.conditions import IfCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
 
 from launch_ros.actions import Node, SetParameter
-from launch_ros.descriptions import ParameterFile
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
-    monitor_pkg_dir = get_package_share_directory("go2w_office_sim")
 
     network_interface = LaunchConfiguration("network_interface")
     use_rviz = LaunchConfiguration("use_rviz")
     enable_cmd_bridge = LaunchConfiguration("enable_cmd_bridge")
+    auto_stand_up = LaunchConfiguration("auto_stand_up")
+    auto_stand_delay = LaunchConfiguration("auto_stand_delay")
 
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
     nav2_params_file = os.path.join(pkg_dir, "config", "nav2_params_official_slam.yaml")
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
-    rviz_config_file = os.path.join(monitor_pkg_dir, "rviz", "go2w_official_slam_status.rviz")
-
-    configured_params = ParameterFile(
-        RewrittenYaml(
-            source_file=nav2_params_file,
-            root_key="",
-            param_rewrites={"autostart": "true"},
-            convert_types=True,
-        ),
-        allow_substs=True,
+    rviz_config_file = os.path.join(pkg_dir, "rviz", "nav2_real.rviz")
+    configured_params = RewrittenYaml(
+        source_file=nav2_params_file,
+        root_key="",
+        param_rewrites={"autostart": "true"},
+        convert_types=True,
     )
 
     remappings = [("/tf", "tf"), ("/tf_static", "tf_static")]
@@ -61,6 +57,16 @@ def generate_launch_description():
         "enable_cmd_bridge",
         default_value="true",
         description="Start go2w_bridge.py for /cmd_vel -> SportClient command output",
+    )
+    declare_auto_stand_up = DeclareLaunchArgument(
+        "auto_stand_up",
+        default_value="true",
+        description="Automatically call the Unitree Python SDK stand_up routine after launch",
+    )
+    declare_auto_stand_delay = DeclareLaunchArgument(
+        "auto_stand_delay",
+        default_value="3.0",
+        description="Delay in seconds before calling the SDK stand_up routine",
     )
 
     stdout_linebuf = SetEnvironmentVariable("RCUTILS_LOGGING_BUFFERED_STREAM", "1")
@@ -88,13 +94,20 @@ def generate_launch_description():
         name="go2w_bridge",
         output="screen",
         condition=IfCondition(enable_cmd_bridge),
+        arguments=[
+            "--network-interface",
+            network_interface,
+            "--auto-stand-up",
+            auto_stand_up,
+            "--auto-stand-delay",
+            auto_stand_delay,
+        ],
         remappings=[
             ("odom", "/sport_odom"),
             ("imu/data", "/sport_imu"),
         ],
         parameters=[
             {
-                "network_interface": network_interface,
                 "cmd_vel_timeout": 0.5,
                 "odom_frame": "odom",
                 "base_frame": "base",
@@ -154,14 +167,6 @@ def generate_launch_description():
             ("scan", "/scan_raw"),
             ("scan_filtered", "/scan"),
         ],
-        output="screen",
-    )
-
-    # Optional live status marker/path for RViz overlay
-    status_node = Node(
-        package="go2w_office_sim",
-        executable="go2w_official_slam_status_node.py",
-        name="go2w_official_slam_status",
         output="screen",
     )
 
@@ -264,6 +269,7 @@ def generate_launch_description():
         "  - slam_toolbox is NOT used in this launch.\n"
         "  - Ensure official SLAM is already running on robot.\n"
         "  - Required topics: /global_map /unitree/slam_mapping/odom /unitree/slam_lidar/points\n"
+        "  - Auto stand: sent by go2w_bridge SDK worker (`auto_stand_up:=false` to disable)\n"
         "========================================\n"
     )
 
@@ -273,12 +279,13 @@ def generate_launch_description():
             declare_net_iface,
             declare_use_rviz,
             declare_enable_cmd_bridge,
+            declare_auto_stand_up,
+            declare_auto_stand_delay,
             robot_state_publisher,
             go2w_bridge,
             official_odom_bridge,
             pointcloud_to_scan,
             scan_filter,
-            status_node,
             TimerAction(period=4.0, actions=[nav2_nodes]),
             rviz_node,
             info,

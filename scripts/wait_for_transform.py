@@ -2,7 +2,7 @@
 """
 Wait for a TF transform to become available, then exit.
 
-Used by launch files to gate downstream stacks on a complete TF chain.
+Used by launch files to gate SLAM/Nav2 startup on a valid TF chain.
 """
 
 import sys

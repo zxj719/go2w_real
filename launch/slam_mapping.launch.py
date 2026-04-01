@@ -1,10 +1,14 @@
 """
-GO2W real robot with SLAM + Nav2 (full navigation stack):
-  go2w_bridge + robot_state_publisher + laser_filter + SLAM Toolbox + Nav2 + RViz
+GO2W real robot SLAM mapping:
+  go2w_bridge + robot_state_publisher + lidar scan pipeline + slam_toolbox + RViz
 
 Usage:
-  ros2 launch go2w_real nav2.launch.py network_interface:=eth0
-  # Then set 2D Goal in RViz to navigate
+  ros2 launch go2w_real slam_mapping.launch.py network_interface:=eth0
+
+This launch is intended for manual mapping with the Unitree remote:
+  - robot stands up automatically via the Unitree Python SDK
+  - slam_toolbox builds the occupancy grid map
+  - driving is done externally, not by a ROS teleop node
 """
 
 import os
@@ -14,21 +18,18 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    GroupAction,
     IncludeLaunchDescription,
     LogInfo,
     RegisterEventHandler,
     SetEnvironmentVariable,
-    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
 
-from launch_ros.actions import Node, SetParameter
+from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
@@ -40,26 +41,13 @@ def generate_launch_description():
     cloud_topic = LaunchConfiguration("cloud_topic")
     lidar_yaw_offset = LaunchConfiguration("lidar_yaw_offset")
     rviz_software_rendering = LaunchConfiguration("rviz_software_rendering")
-    auto_stand_up = LaunchConfiguration("auto_stand_up")
-    auto_stand_delay = LaunchConfiguration("auto_stand_delay")
+    odom_source_mode = LaunchConfiguration("odom_source_mode")
 
-    # File paths
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
-    nav2_params_file = os.path.join(pkg_dir, "config", "nav2_params_foxy.yaml")
     slam_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
-    rviz_config_file = os.path.join(pkg_dir, "rviz", "nav2_real.rviz")
-    # Nav2 params with autostart
-    configured_params = RewrittenYaml(
-        source_file=nav2_params_file,
-        root_key="",
-        param_rewrites={"autostart": "true"},
-        convert_types=True,
-    )
+    rviz_config_file = os.path.join(pkg_dir, "rviz", "slam_mapping.rviz")
 
-    remappings = [("/tf", "tf"), ("/tf_static", "tf_static")]
-
-    # ===== Launch arguments =====
     declare_net_iface = DeclareLaunchArgument(
         "network_interface",
         default_value="eth0",
@@ -68,7 +56,7 @@ def generate_launch_description():
     declare_use_rviz = DeclareLaunchArgument(
         "use_rviz",
         default_value="true",
-        description="Launch RViz2 with the go2w_real navigation layout",
+        description="Launch RViz for SLAM mapping",
     )
     declare_cloud_topic = DeclareLaunchArgument(
         "cloud_topic",
@@ -85,15 +73,10 @@ def generate_launch_description():
         default_value="true",
         description="Force RViz to use software OpenGL rendering",
     )
-    declare_auto_stand_up = DeclareLaunchArgument(
-        "auto_stand_up",
-        default_value="true",
-        description="Automatically call the Unitree Python SDK stand_up routine after launch",
-    )
-    declare_auto_stand_delay = DeclareLaunchArgument(
-        "auto_stand_delay",
-        default_value="3.0",
-        description="Delay in seconds before calling the SDK stand_up routine",
+    declare_odom_source_mode = DeclareLaunchArgument(
+        "odom_source_mode",
+        default_value="hybrid",
+        description="Bridge odom translation source: position, velocity, or hybrid",
     )
 
     stdout_linebuf = SetEnvironmentVariable(
@@ -110,7 +93,6 @@ def generate_launch_description():
         condition=IfCondition(rviz_software_rendering),
     )
 
-    # ===== 1. Robot State Publisher =====
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -142,7 +124,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ===== 2. GO2W Bridge =====
     go2w_bridge = Node(
         package="go2w_real",
         executable="go2w_bridge.py",
@@ -151,10 +132,6 @@ def generate_launch_description():
         arguments=[
             "--network-interface",
             network_interface,
-            "--auto-stand-up",
-            auto_stand_up,
-            "--auto-stand-delay",
-            auto_stand_delay,
         ],
         parameters=[
             {
@@ -162,11 +139,11 @@ def generate_launch_description():
                 "odom_frame": "odom",
                 "base_frame": "base",
                 "publish_odom_tf": True,
+                "odom_source_mode": odom_source_mode,
             }
         ],
     )
 
-    # ===== 3. 3D pointcloud -> 2D laser scan =====
     pointcloud_relay = Node(
         package="go2w_real",
         executable="pointcloud_relay.py",
@@ -207,7 +184,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ===== 3b. Laser scan filter =====
     scan_filter = Node(
         package="laser_filters",
         executable="scan_to_scan_filter_chain",
@@ -217,17 +193,6 @@ def generate_launch_description():
             ("scan_filtered", "/scan"),
         ],
         output="screen",
-    )
-
-    # ===== 4. SLAM Toolbox =====
-    slam_toolbox = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(slam_toolbox_dir, "launch", "online_async_launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": "false",
-            "slam_params_file": slam_params_file,
-        }.items(),
     )
 
     wait_for_odom_to_lidar_tf = Node(
@@ -246,64 +211,16 @@ def generate_launch_description():
         ],
     )
 
-    # ===== 5. Nav2 Stack =====
-    nav2_lifecycle_nodes = [
-        "controller_server",
-        "planner_server",
-        "recoveries_server",
-        "bt_navigator",
-    ]
-
-    nav2_nodes = GroupAction(
-        actions=[
-            SetParameter("use_sim_time", False),
-            Node(
-                package="nav2_controller",
-                executable="controller_server",
-                output="screen",
-                parameters=[configured_params],
-                remappings=remappings,
-            ),
-            Node(
-                package="nav2_planner",
-                executable="planner_server",
-                name="planner_server",
-                output="screen",
-                parameters=[configured_params],
-                remappings=remappings,
-            ),
-            Node(
-                package="nav2_recoveries",
-                executable="recoveries_server",
-                name="recoveries_server",
-                output="screen",
-                parameters=[configured_params],
-                remappings=remappings,
-            ),
-            Node(
-                package="nav2_bt_navigator",
-                executable="bt_navigator",
-                name="bt_navigator",
-                output="screen",
-                parameters=[configured_params],
-                remappings=remappings,
-            ),
-            Node(
-                package="nav2_lifecycle_manager",
-                executable="lifecycle_manager",
-                name="lifecycle_manager_navigation",
-                output="screen",
-                parameters=[
-                    {
-                        "autostart": True,
-                        "node_names": nav2_lifecycle_nodes,
-                    }
-                ],
-            ),
-        ],
+    slam_toolbox = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(slam_toolbox_dir, "launch", "online_async_launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "false",
+            "slam_params_file": slam_params_file,
+        }.items(),
     )
 
-    # ===== 6. RViz =====
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -314,31 +231,26 @@ def generate_launch_description():
         condition=IfCondition(use_rviz),
     )
 
-    def launch_stack_after_tf_gate(event, _context):
+    def launch_slam_after_tf_gate(event, _context):
         if event.returncode == 0:
-            return [
-                slam_toolbox,
-                TimerAction(period=5.0, actions=[nav2_nodes]),
-            ]
+            return [slam_toolbox]
 
         return [
             LogInfo(
                 msg="[go2w_real] TF gate failed: odom <- lidar was not "
-                "available within 30s. Not starting slam_toolbox/Nav2."
+                "available within 30s. Not starting slam_toolbox."
             )
         ]
 
     info = LogInfo(
         msg="\n\n========================================\n"
-        "  GO2W Real Robot - SLAM + Nav2\n"
-        "  - Set 2D Goal in RViz to navigate\n"
-        "  - Foxy Nav2 stack: controller + planner + recoveries + bt_navigator\n"
-        "  - Auto stand: sent by go2w_bridge SDK worker (`auto_stand_up:=false` to disable)\n"
-        "  - RViz enabled by default (`use_rviz:=false` for headless robot)\n"
-        "  - RViz software rendering enabled by default (`rviz_software_rendering:=false` to disable)\n"
+        "  GO2W Real Robot - SLAM Mapping\n"
+        "  - Use the Unitree remote to drive while slam_toolbox builds /map\n"
+        "  - Odom source mode defaults to hybrid (`odom_source_mode:=velocity` to force velocity integration)\n"
         "  - Pointcloud source defaults to /unitree/slam_lidar/points (`cloud_topic:=...` to override)\n"
-        "  - Stand:  ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once\n"
-        "  - Stop:   ros2 topic pub /cmd_control std_msgs/String '{data: stop}' --once\n"
+        "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
+        "  - Stand:    ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once\n"
+        "  - Stop:     ros2 topic pub /cmd_control std_msgs/String '{data: stop}' --once\n"
         "\n========================================\n"
     )
 
@@ -350,8 +262,7 @@ def generate_launch_description():
             declare_cloud_topic,
             declare_lidar_yaw_offset,
             declare_rviz_software_rendering,
-            declare_auto_stand_up,
-            declare_auto_stand_delay,
+            declare_odom_source_mode,
             rviz_software_gl,
             rviz_gl_version,
             robot_state_publisher,
@@ -365,7 +276,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=wait_for_odom_to_lidar_tf,
-                    on_exit=launch_stack_after_tf_gate,
+                    on_exit=launch_slam_after_tf_gate,
                 )
             ),
             rviz_node,

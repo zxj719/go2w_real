@@ -28,9 +28,13 @@ import signal
 import sys
 import time
 
-LOCAL_UNITREE_SDK2_PYTHON = os.path.expanduser("~/ros2_ws/src/unitree_sdk2_python")
-if os.path.isdir(LOCAL_UNITREE_SDK2_PYTHON) and LOCAL_UNITREE_SDK2_PYTHON not in sys.path:
-    sys.path.insert(0, LOCAL_UNITREE_SDK2_PYTHON)
+SDK_SEARCH_PATHS = (
+    os.path.expanduser("~/ros_ws/src/unitree_sdk2_python"),
+    os.path.expanduser("~/ros2_ws/src/unitree_sdk2_python"),
+)
+for sdk_path in SDK_SEARCH_PATHS:
+    if os.path.isdir(sdk_path) and sdk_path not in sys.path:
+        sys.path.insert(0, sdk_path)
 
 
 DEFAULT_STATE_TOPICS = (
@@ -38,6 +42,10 @@ DEFAULT_STATE_TOPICS = (
     "rt/sportmodestate",     # GO2 / older examples
 )
 NO_STATE_WARN_PERIOD = 5.0
+POSITION_USEFUL_NORM_EPS = 1e-3
+POSITION_USEFUL_DELTA_EPS = 1e-3
+MOTION_VELOCITY_EPS = 0.02
+MOTION_YAW_RATE_EPS = 0.05
 
 
 def _normalize_network_interface(net_iface: str):
@@ -50,6 +58,30 @@ def _normalize_network_interface(net_iface: str):
         return None
 
     return normalized
+
+
+def _parse_cli_args(raw_args):
+    """Extract bridge-specific CLI args and return remaining ROS args."""
+    net_iface = ""
+    ros_args = []
+
+    i = 0
+    while i < len(raw_args):
+        arg = raw_args[i]
+
+        if arg == "--network-interface" and i + 1 < len(raw_args):
+            net_iface = raw_args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--network-interface="):
+            net_iface = arg.split("=", 1)[1]
+            i += 1
+            continue
+
+        ros_args.append(arg)
+        i += 1
+
+    return net_iface, ros_args
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -216,6 +248,10 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float):
     return q
 
 
+def _vector_norm(vec):
+    return math.sqrt(sum(component * component for component in vec))
+
+
 def main(args=None):
     import rclpy
     from rclpy.node import Node
@@ -228,19 +264,14 @@ def main(args=None):
     from std_msgs.msg import String
     import tf2_ros
 
-    # ── Parse network_interface from args BEFORE rclpy.init ───────────
-    # We need to fork SDK2 worker before rclpy touches CycloneDDS.
-    # Default to auto-detect; override via --ros-args -p network_interface:=xxx
-    net_iface = ""
+    # ── Parse bridge CLI args BEFORE rclpy.init ───────────────────────
+    # We need to start the SDK worker before rclpy touches CycloneDDS.
     if args is None:
         import sys as _sys
         _argv = _sys.argv[1:]
     else:
         _argv = list(args)
-    for i, a in enumerate(_argv):
-        if "network_interface:=" in a:
-            net_iface = a.split(":=", 1)[1]
-            break
+    net_iface, ros_args = _parse_cli_args(_argv)
 
     # IPC queues
     state_queue = multiprocessing.Queue(maxsize=2)
@@ -256,14 +287,19 @@ def main(args=None):
     )
     sdk_proc = multiprocessing.Process(
         target=_sdk2_worker,
-        args=(net_iface, state_queue, cmd_queue, shutdown_event),
+        args=(
+            net_iface,
+            state_queue,
+            cmd_queue,
+            shutdown_event,
+        ),
         daemon=True,
     )
     sdk_proc.start()
     print(f"[go2w_bridge] SDK2 worker started (PID {sdk_proc.pid})", flush=True)
 
     # Now safe to initialize ROS2 (creates its own CycloneDDS domain)
-    rclpy.init(args=args)
+    rclpy.init(args=ros_args)
 
     node = Node("go2w_bridge")
 
@@ -273,13 +309,21 @@ def main(args=None):
     node.declare_parameter("odom_frame", "odom")
     node.declare_parameter("base_frame", "base")
     node.declare_parameter("publish_odom_tf", True)
+    node.declare_parameter("odom_source_mode", "hybrid")
 
     odom_frame = node.get_parameter("odom_frame").value
     base_frame = node.get_parameter("base_frame").value
     publish_odom_tf = node.get_parameter("publish_odom_tf").value
+    odom_source_mode = str(node.get_parameter("odom_source_mode").value).strip().lower()
+    if odom_source_mode not in ("position", "velocity", "hybrid"):
+        node.get_logger().warn(
+            f"Unsupported odom_source_mode='{odom_source_mode}', falling back to 'hybrid'"
+        )
+        odom_source_mode = "hybrid"
 
     node.get_logger().info(
-        f"SDK2 worker PID {sdk_proc.pid}, interface: {iface_label}"
+        f"SDK2 worker PID {sdk_proc.pid}, interface: {iface_label}, "
+        f"odom_source_mode={odom_source_mode}"
     )
 
     # Publishers
@@ -323,9 +367,18 @@ def main(args=None):
     # Odom timer: read state from SDK2 child and publish
     next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
     sdk_proc_dead_logged = False
+    last_state_time = None
+    last_reported_pos = None
+    integrated_pos = [0.0, 0.0, 0.0]
+    using_velocity_fallback = False
 
     def _odom_timer_cb():
-        nonlocal next_no_state_warn, sdk_proc_dead_logged
+        nonlocal next_no_state_warn
+        nonlocal sdk_proc_dead_logged
+        nonlocal last_state_time
+        nonlocal last_reported_pos
+        nonlocal integrated_pos
+        nonlocal using_velocity_fallback
         if not sdk_proc.is_alive():
             if not sdk_proc_dead_logged:
                 node.get_logger().error(
@@ -346,18 +399,73 @@ def main(args=None):
             return
 
         next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+        state_time = time.monotonic()
+        dt = 0.0
+        if last_state_time is not None:
+            dt = min(max(state_time - last_state_time, 0.0), 0.2)
+        last_state_time = state_time
+
+        raw_pos = list(odom_data["pos"])
+        velocity = list(odom_data["vel"])
+        velocity_norm = _vector_norm(velocity)
+        yaw_rate = abs(float(odom_data["yaw_speed"]))
+        position_norm = _vector_norm(raw_pos)
+        position_delta = 0.0
+        if last_reported_pos is not None:
+            position_delta = _vector_norm(
+                [raw_pos[i] - last_reported_pos[i] for i in range(3)]
+            )
+        last_reported_pos = raw_pos
+
+        reported_position_is_useful = (
+            position_norm > POSITION_USEFUL_NORM_EPS
+            or position_delta > POSITION_USEFUL_DELTA_EPS
+        )
+        motion_is_reported = (
+            velocity_norm > MOTION_VELOCITY_EPS or yaw_rate > MOTION_YAW_RATE_EPS
+        )
+
+        if odom_source_mode == "position":
+            integrated_pos = raw_pos.copy()
+            odom_pos = raw_pos
+        elif odom_source_mode == "velocity":
+            if dt > 0.0:
+                for i in range(3):
+                    integrated_pos[i] += velocity[i] * dt
+            odom_pos = integrated_pos.copy()
+        else:
+            if reported_position_is_useful:
+                integrated_pos = raw_pos.copy()
+                odom_pos = raw_pos
+                if using_velocity_fallback:
+                    node.get_logger().info(
+                        "SportModeState position resumed; switching /odom "
+                        "translation back to reported position."
+                    )
+                    using_velocity_fallback = False
+            else:
+                if dt > 0.0:
+                    for i in range(3):
+                        integrated_pos[i] += velocity[i] * dt
+                odom_pos = integrated_pos.copy()
+
+                if motion_is_reported and not using_velocity_fallback:
+                    node.get_logger().warn(
+                        "SportModeState position is zero/stale while motion is "
+                        "reported; using integrated velocity for /odom translation."
+                    )
+                    using_velocity_fallback = True
 
         now = node.get_clock().now().to_msg()
 
-        # Odometry
         odom = Odometry()
         odom.header.stamp = now
         odom.header.frame_id = odom_frame
         odom.child_frame_id = base_frame
 
-        odom.pose.pose.position.x = odom_data["pos"][0]
-        odom.pose.pose.position.y = odom_data["pos"][1]
-        odom.pose.pose.position.z = odom_data["pos"][2]
+        odom.pose.pose.position.x = odom_pos[0]
+        odom.pose.pose.position.y = odom_pos[1]
+        odom.pose.pose.position.z = odom_pos[2]
 
         roll, pitch, yaw = odom_data["rpy"]
         odom.pose.pose.orientation = euler_to_quaternion(roll, pitch, yaw)
@@ -369,19 +477,17 @@ def main(args=None):
 
         odom_pub.publish(odom)
 
-        # TF: odom -> base
         if publish_odom_tf:
             t = TransformStamped()
             t.header.stamp = now
             t.header.frame_id = odom_frame
             t.child_frame_id = base_frame
-            t.transform.translation.x = odom_data["pos"][0]
-            t.transform.translation.y = odom_data["pos"][1]
-            t.transform.translation.z = odom_data["pos"][2]
+            t.transform.translation.x = odom_pos[0]
+            t.transform.translation.y = odom_pos[1]
+            t.transform.translation.z = odom_pos[2]
             t.transform.rotation = odom.pose.pose.orientation
             tf_broadcaster.sendTransform(t)
 
-        # IMU
         imu_msg = Imu()
         imu_msg.header.stamp = now
         imu_msg.header.frame_id = "imu"

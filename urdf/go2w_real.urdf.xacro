@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <!--
   GO2W URDF for real robot (no Gazebo plugins).
-  Reuses const.xacro from go2w_office_sim for dimensions/inertia.
+  Uses local const.xacro and meshes so the package is self-contained.
   Only provides TF tree: base -> body -> legs/sensors
 -->
 <robot xmlns:xacro="http://ros.org/wiki/xacro" name="go2w">
-  <xacro:include filename="$(find go2w_office_sim)/urdf/const.xacro"/>
+  <xacro:include filename="$(find go2w_real)/urdf/const.xacro"/>
 
-  <xacro:property name="mesh_prefix" value="file://$(find go2w_office_sim)/meshes" />
+  <xacro:property name="mesh_prefix" value="file://$(find go2w_real)/meshes" />
 
   <!-- Leg macro: same as sim but no gazebo friction tags -->
   <xacro:macro name="leg" params="prefix front left">
@@ -124,11 +124,10 @@
         </geometry>
       </visual>
     </link>
-    <joint name="${prefix}_foot_joint" type="continuous">
+    <joint name="${prefix}_foot_joint" type="fixed">
       <origin xyz="${foot_offset_x} ${foot_offset_y*left_sign} ${foot_offset_z}" rpy="0 0 0" />
       <parent link="${prefix}_calf" />
       <child link="${prefix}_foot" />
-      <axis xyz="0 1 0" />
     </joint>
 
   </xacro:macro>

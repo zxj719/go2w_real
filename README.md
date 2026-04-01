@@ -63,10 +63,10 @@ L2 4D LiDAR (PointCloud2)     Gazebo 3D gpu_lidar (PointCloud2)
 
 ## Prerequisites
 
-- ROS 2 Jazzy
+- ROS 2 Foxy
 - `unitree_sdk2_python` (in workspace)
-- `pointcloud_to_laserscan`: `sudo apt install ros-jazzy-pointcloud-to-laserscan`
-- `laser_filters`: `sudo apt install ros-jazzy-laser-filters`
+- `pointcloud_to_laserscan`: `sudo apt install ros-foxy-pointcloud-to-laserscan`
+- `laser_filters`: `sudo apt install ros-foxy-laser-filters`
 - Nav2, SLAM Toolbox (standard ROS 2 nav stack)
 
 ## Network Setup
@@ -87,7 +87,12 @@ sudo ip addr add 192.168.123.100/24 dev eth0
 ```bash
 ros2 launch go2w_real bringup.launch.py network_interface:=eth0
 
-# Stand up the robot
+# Auto stand_up is enabled by default.
+# Disable it if needed:
+ros2 launch go2w_real bringup.launch.py network_interface:=eth0 auto_stand_up:=false
+
+# Or trigger stand_up manually:
+ros2 run go2w_real go2_motion_command.py --action stand_up --network-interface eth0
 ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
 
 # Teleop
@@ -99,8 +104,18 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```bash
 ros2 launch go2w_real nav2.launch.py network_interface:=eth0
 
-# Stand up first
-ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
+# Auto stand_up is enabled by default.
+# Disable it if needed:
+ros2 launch go2w_real nav2.launch.py network_interface:=eth0 auto_stand_up:=false
+
+# The default LiDAR source now matches the working auto_explore pipeline:
+#   /unitree/slam_lidar/points
+# Override it if your robot publishes a different topic:
+ros2 launch go2w_real nav2.launch.py network_interface:=eth0 \
+  cloud_topic:=/unitree/slam_lidar/points
+
+# Disable RViz on a headless robot:
+ros2 launch go2w_real nav2.launch.py network_interface:=eth0 use_rviz:=false
 
 # Set 2D Goal in RViz to navigate
 ```
@@ -117,6 +132,10 @@ ros2 launch go2w_real nav2_official_slam.launch.py network_interface:=eth0
 ### 3. Control Commands
 
 ```bash
+# Python SDK one-shot helper
+ros2 run go2w_real go2_motion_command.py --action stand_up --network-interface eth0
+ros2 run go2w_real go2_motion_command.py --action recovery --network-interface eth0
+
 # Stand up / down
 ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
 ros2 topic pub /cmd_control std_msgs/String '{data: stand_down}' --once
@@ -128,22 +147,40 @@ ros2 topic pub /cmd_control std_msgs/String '{data: damp}' --once
 ros2 topic pub /cmd_control std_msgs/String '{data: recovery}' --once
 ```
 
-## Package Structure
+## Workspace Layout
 
+```text
+ros_ws/src/
+├── go2w_real/
+│   ├── scripts/
+│   │   ├── go2w_bridge.py          # Core: cmd_vel <-> SportClient, state -> odom/tf/imu
+│   │   ├── go2_motion_command.py   # One-shot SDK helper (stand_up, recovery, etc.)
+│   │   └── wait_for_transform.py   # Gates SLAM/Nav2 startup on a valid TF chain
+│   ├── config/
+│   │   ├── nav2_params.yaml        # Nav2 (conservative speeds for real hardware)
+│   │   ├── slam_params.yaml        # SLAM Toolbox
+│   │   └── laser_filter.yaml       # Self-occlusion box filter
+│   ├── launch/
+│   │   ├── bringup.launch.py       # Bridge + RSP + lidar pipeline (teleop-ready)
+│   │   ├── nav2.launch.py          # Full: bridge + SLAM + Nav2 + RViz
+│   │   └── nav2_official_slam.launch.py
+│   ├── rviz/
+│   │   └── nav2_real.rviz          # RViz layout: robot, map, scan, TF, odom
+│   ├── urdf/
+│   │   ├── go2w_real.urdf.xacro    # TF tree (no Gazebo plugins)
+│   │   └── const.xacro
+│   └── meshes/                     # Local GO2W meshes; package is self-contained
+└── go2w_auto_explore/
+    ├── launch/auto_explore.launch.py
+    ├── config/
+    ├── docs/
+    ├── rviz/
+    ├── scripts/
+    ├── src/
+    └── urdf/
 ```
-go2w_real/
-├── scripts/
-│   └── go2w_bridge.py          # Core: cmd_vel <-> SportClient, state -> odom/tf/imu
-├── config/
-│   ├── nav2_params.yaml         # Nav2 (conservative speeds for real hardware)
-│   ├── slam_params.yaml         # SLAM Toolbox
-│   └── laser_filter.yaml        # Self-occlusion box filter
-├── urdf/
-│   └── go2w_real.urdf.xacro     # TF tree (no Gazebo plugins)
-└── launch/
-    ├── bringup.launch.py        # Bridge + RSP + lidar pipeline (teleop-ready)
-    └── nav2.launch.py           # Full: bridge + SLAM + Nav2 + RViz
-```
+
+`go2w_auto_explore` is now a separate top-level package in the workspace, not a subdirectory under `go2w_real`.
 
 ## Key Differences from Simulation
 

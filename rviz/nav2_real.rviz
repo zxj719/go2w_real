@@ -1,6 +1,8 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
   - Class: rviz_common/Views
     Name: Views
 Visualization Manager:
@@ -16,6 +18,23 @@ Visualization Manager:
       Plane Cell Count: 40
       Reference Frame: <Fixed Frame>
 
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Value: true
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      TF Prefix: ""
+      Update Interval: 0
+      Visual Enabled: true
+      Collision Enabled: false
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true
@@ -25,7 +44,7 @@ Visualization Manager:
       Show Names: true
 
     - Class: rviz_default_plugins/Map
-      Name: OccupancyGrid
+      Name: Map
       Enabled: true
       Value: true
       Topic:
@@ -44,109 +63,68 @@ Visualization Manager:
       Size (m): 0.03
       Style: Flat Squares
       Color Transformer: FlatColor
-      Color: 255; 0; 0
+      Color: 255; 64; 64
       Decay Time: 0
-      Queue Size: 1
+      Queue Size: 10
 
-    - Class: rviz_default_plugins/MarkerArray
-      Name: Frontiers
-      Enabled: true
-      Value: true
-      Marker Topic:
-        Value: /explore/frontiers
-
-    - Class: rviz_default_plugins/MarkerArray
-      Name: GVD
-      Enabled: true
-      Value: true
-      Marker Topic:
-        Value: /explore/gvd
-
-    - Class: rviz_default_plugins/MarkerArray
-      Name: GVD_Path
-      Enabled: true
-      Value: true
-      Marker Topic:
-        Value: /explore/gvd_path
-
-    - Class: rviz_default_plugins/Map
-      Name: GlobalCostmap
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
       Enabled: true
       Value: true
       Topic:
+        Value: /odom
+      Keep: 200
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Shape:
+        Value: Arrow
+        Color: 255; 170; 0
+        Length: 0.35
+        Radius: 0.06
+
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Enabled: false
+      Value: false
+      Topic:
         Value: /global_costmap/costmap
-      Alpha: 0.4
+      Alpha: 0.35
       Color Scheme: costmap
       Draw Behind: false
 
     - Class: rviz_default_plugins/Map
       Name: LocalCostmap
-      Enabled: true
-      Value: true
+      Enabled: false
+      Value: false
       Topic:
         Value: /local_costmap/costmap
-      Alpha: 0.5
+      Alpha: 0.45
       Color Scheme: costmap
       Draw Behind: false
 
     - Class: rviz_default_plugins/Path
-      Name: NavPlan
+      Name: GlobalPlan
       Enabled: true
       Value: true
       Topic:
         Value: /plan
       Color: 0; 255; 0
-      Line Style:
-        Value: Lines
       Width: 0.03
-
-    - Class: rviz_default_plugins/Path
-      Name: LocalPlan
-      Enabled: true
-      Value: true
-      Topic:
-        Value: /local_plan
-      Color: 255; 255; 0
       Line Style:
         Value: Lines
-      Width: 0.02
-
-    - Class: rviz_default_plugins/Odometry
-      Name: SlamOdom
-      Enabled: true
-      Value: true
-      Topic:
-        Value: /odom
-      Position Tolerance: 0.1
-      Angle Tolerance: 0.1
-      Keep: 200
-      Shape:
-        Value: Arrow
-        Color: 255; 0; 127
-        Length: 0.3
-        Radius: 0.06
-
-    - Class: rviz_default_plugins/PointCloud2
-      Name: SlamMappingPoints
-      Enabled: false
-      Value: false
-      Topic:
-        Value: /unitree/slam_mapping/points
-      Size (Pixels): 2
-      Size (m): 0.03
-      Style: Flat Squares
-      Color Transformer: FlatColor
-      Color: 90; 220; 255
-      Decay Time: 0
 
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: map
+    Fixed Frame: odom
     Frame Rate: 15
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic: /goal_pose
   Views:
     Current:
       Class: rviz_default_plugins/TopDownOrtho
@@ -158,6 +136,8 @@ Window Geometry:
   Width: 1500
   Height: 950
   Displays:
+    collapsed: false
+  Tool Properties:
     collapsed: false
   Views:
     collapsed: false

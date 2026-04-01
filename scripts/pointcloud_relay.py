@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Relay PointCloud2 from RELIABLE publisher to RELIABLE republish.
+"""Relay PointCloud2 from a live LiDAR topic to a ROS-friendly topic.
 
-xt16_driver publishes /unitree/slam_lidar/points with RELIABLE QoS.
-pointcloud_to_laserscan subscribes with BEST_EFFORT (SensorDataQoS).
-BEST_EFFORT subscriber cannot receive from RELIABLE publisher in CycloneDDS.
-
-This relay subscribes RELIABLE and republishes with BEST_EFFORT so
-pointcloud_to_laserscan can receive the data.
+This mirrors the working scan pipeline used by go2w_auto_explore so
+go2w_real/nav2.launch.py can consume the same pointcloud source.
 """
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2
 
 
