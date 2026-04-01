@@ -129,7 +129,22 @@ If official Unitree SLAM is already running on the robot and publishing:
 ros2 launch go2w_real nav2_official_slam.launch.py network_interface:=eth0
 ```
 
-### 3. Control Commands
+### 4. SLAM Mapping with RF2O lidar odometry
+
+If Unitree's odometer service is unavailable, use lidar-only odometry:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py
+
+# Override the pointcloud topic if needed:
+ros2 launch go2w_real slam_rf2o.launch.py \
+  cloud_topic:=/unitree/slam_lidar/points
+```
+
+This launch assumes the robot is already standing and you are driving with the
+Unitree remote.
+
+### 5. Control Commands
 
 ```bash
 # Python SDK one-shot helper
@@ -163,7 +178,9 @@ ros_ws/src/
 │   ├── launch/
 │   │   ├── bringup.launch.py       # Bridge + RSP + lidar pipeline (teleop-ready)
 │   │   ├── nav2.launch.py          # Full: bridge + SLAM + Nav2 + RViz
-│   │   └── nav2_official_slam.launch.py
+│   │   ├── nav2_official_slam.launch.py
+│   │   ├── slam_mapping.launch.py  # Mapping with SDK/sport-state odom
+│   │   └── slam_rf2o.launch.py     # Mapping with lidar-derived RF2O odom
 │   ├── rviz/
 │   │   └── nav2_real.rviz          # RViz layout: robot, map, scan, TF, odom
 │   ├── urdf/
