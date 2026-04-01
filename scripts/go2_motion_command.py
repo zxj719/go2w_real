@@ -42,8 +42,32 @@ def _build_parser():
     parser.add_argument(
         "--action",
         default="stand_up",
-        choices=("stand_up", "stand_down", "damp", "recovery", "balance", "stop"),
+        choices=("stand_up", "stand_down", "damp", "recovery", "balance", "stop", "move"),
         help="SportClient action to send.",
+    )
+    parser.add_argument(
+        "--vx",
+        type=float,
+        default=0.08,
+        help="Forward velocity for --action move, in m/s.",
+    )
+    parser.add_argument(
+        "--vy",
+        type=float,
+        default=0.0,
+        help="Lateral velocity for --action move, in m/s.",
+    )
+    parser.add_argument(
+        "--vyaw",
+        type=float,
+        default=0.0,
+        help="Yaw rate for --action move, in rad/s.",
+    )
+    parser.add_argument(
+        "--move-seconds",
+        type=float,
+        default=1.0,
+        help="Duration for --action move before StopMove() is sent.",
     )
     parser.add_argument(
         "--settle-seconds",
@@ -102,7 +126,20 @@ def main():
     }
 
     print(f"[go2_motion_command] Sending action: {args.action}", flush=True)
-    action_map[args.action]()
+    if args.action == "move":
+        print(
+            "[go2_motion_command] Move command "
+            f"vx={args.vx:.3f} vy={args.vy:.3f} vyaw={args.vyaw:.3f} "
+            f"for {args.move_seconds:.2f}s",
+            flush=True,
+        )
+        client.Move(args.vx, args.vy, args.vyaw)
+        if args.move_seconds > 0.0:
+            time.sleep(args.move_seconds)
+        client.StopMove()
+        print("[go2_motion_command] StopMove sent after move window.", flush=True)
+    else:
+        action_map[args.action]()
 
     if args.post_seconds > 0.0:
         time.sleep(args.post_seconds)

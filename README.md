@@ -2,7 +2,7 @@
 
 ROS 2 package for mapping and navigation on the real Unitree GO2W.
 
-The current mapping workflow in this repository is considered stable for real-robot use:
+The current SLAM + navigation test workflow in this repository is considered stable for real-robot use:
 
 - LiDAR source: `/unitree/slam_lidar/points`
 - 2D scan generation: `pointcloud_to_laserscan` + `laser_filters`
@@ -14,19 +14,20 @@ This path avoids depending on Unitree's odometer service, which may exist on som
 
 ## Status
 
-Recommended mapping launch:
+Recommended unified launch:
 
 ```bash
-ros2 launch go2w_real slam_rf2o.launch.py
+ros2 launch go2w_real slam_rf2o.launch.py network_interface:=eth0
 ```
 
 This is the recommended path for:
 
 - manual map recording
 - RViz visualization
+- RViz `2D Goal Pose` navigation testing
 - later waypoint collection on the finished map
 
-Experimental or environment-dependent paths still exist in this package, but `slam_rf2o.launch.py` is the default recommendation for real mapping.
+`slam_rf2o.launch.py` is the default entrypoint for this package.
 
 ## Tested Data Flow
 
@@ -101,9 +102,8 @@ ros_ws/src/
 
 Important files:
 
-- [`launch/slam_rf2o.launch.py`](launch/slam_rf2o.launch.py): stable mapping launch
-- [`launch/slam_mapping.launch.py`](launch/slam_mapping.launch.py): older mapping launch using SDK odom bridge
-- [`launch/nav2.launch.py`](launch/nav2.launch.py): full Nav2 path
+- [`launch/slam_rf2o.launch.py`](launch/slam_rf2o.launch.py): unified RF2O + slam_toolbox + Nav2 launch
+- [`rviz/nav2_real.rviz`](rviz/nav2_real.rviz): RViz layout with `2D Goal Pose`, map, costmaps, and plans
 - [`scripts/save_map_and_waypoints.py`](scripts/save_map_and_waypoints.py): map + waypoint recorder
 
 ## Network Setup
@@ -141,21 +141,22 @@ Expected input topic:
 
 - `/unitree/slam_lidar/points`
 
-### 3. Launch mapping
+### 3. Launch SLAM + Nav2
 
 ```bash
-ros2 launch go2w_real slam_rf2o.launch.py
+ros2 launch go2w_real slam_rf2o.launch.py network_interface:=eth0
 ```
 
 Optional overrides:
 
 ```bash
 ros2 launch go2w_real slam_rf2o.launch.py \
+  network_interface:=eth0 \
   cloud_topic:=/unitree/slam_lidar/points \
   use_rviz:=true
 ```
 
-### 4. Drive the robot with the Unitree remote
+### 4. Build the initial map with the Unitree remote
 
 Do not use ROS teleop in the mature mapping workflow unless you explicitly want it.
 
@@ -166,7 +167,23 @@ Recommended practice:
 - prefer smooth loops and revisits
 - let SLAM close loops naturally
 
-### 5. Save the map and fixed navigation points
+### 5. Test a navigation goal in RViz
+
+Wait until RViz shows all of these before testing:
+
+- robot model on the map
+- `/map`
+- global path and costmaps when Nav2 finishes startup
+
+Then:
+
+- click `2D Goal Pose` in the RViz top toolbar
+- click once on a free-space point in the map
+- drag to set the goal yaw and release
+- watch `/plan`, `/local_plan`, `/global_costmap/costmap`, and `/local_costmap/costmap`
+- if you want to stop immediately, publish a zero command or cancel the Nav2 goal
+
+### 6. Save the map and fixed navigation points
 
 Run the recorder in another terminal:
 
@@ -230,34 +247,18 @@ waypoints:
 
 ## Launch Files
 
-### Stable / recommended
+### Unified SLAM + Nav2 entrypoint
 
 ```bash
-ros2 launch go2w_real slam_rf2o.launch.py
+ros2 launch go2w_real slam_rf2o.launch.py network_interface:=eth0
 ```
 
 Use this when:
 
 - you want reliable real-world map building
+- you want RViz `2D Goal Pose` testing on the live map
 - official odometer service is unavailable or inconsistent
-- you are manually driving with the remote
-
-### Older SDK odom mapping path
-
-```bash
-ros2 launch go2w_real slam_mapping.launch.py network_interface:=eth0
-```
-
-This keeps the Unitree SDK bridge in the loop and tries to use sport/odom state.
-It can still be useful for debugging, but it is not the primary recommended mapping path.
-
-### Full Nav2 bringup
-
-```bash
-ros2 launch go2w_real nav2.launch.py network_interface:=eth0
-```
-
-Use this after you already have a map and want to keep working on navigation integration.
+- you are manually driving with the remote before sending Nav2 goals
 
 ## Known Good Assumptions
 

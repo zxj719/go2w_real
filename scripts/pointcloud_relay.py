@@ -2,7 +2,7 @@
 """Relay PointCloud2 from a live LiDAR topic to a ROS-friendly topic.
 
 This mirrors the working scan pipeline used by go2w_auto_explore so
-go2w_real/nav2.launch.py can consume the same pointcloud source.
+the RF2O + Nav2 launch can consume the same pointcloud source.
 """
 
 import rclpy

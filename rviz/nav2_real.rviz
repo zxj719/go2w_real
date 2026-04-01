@@ -84,8 +84,8 @@ Visualization Manager:
 
     - Class: rviz_default_plugins/Map
       Name: GlobalCostmap
-      Enabled: false
-      Value: false
+      Enabled: true
+      Value: true
       Topic:
         Value: /global_costmap/costmap
       Alpha: 0.35
@@ -94,8 +94,8 @@ Visualization Manager:
 
     - Class: rviz_default_plugins/Map
       Name: LocalCostmap
-      Enabled: false
-      Value: false
+      Enabled: true
+      Value: true
       Topic:
         Value: /local_costmap/costmap
       Alpha: 0.45
@@ -113,9 +113,20 @@ Visualization Manager:
       Line Style:
         Value: Lines
 
+    - Class: rviz_default_plugins/Path
+      Name: LocalPlan
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /local_plan
+      Color: 255; 230; 0
+      Width: 0.04
+      Line Style:
+        Value: Lines
+
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: map
     Frame Rate: 15
   Tools:
     - Class: rviz_default_plugins/MoveCamera

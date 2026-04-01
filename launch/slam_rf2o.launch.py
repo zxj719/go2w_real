@@ -1,14 +1,14 @@
 """
-GO2W real robot SLAM mapping using lidar-only odometry:
-  pointcloud -> scan -> rf2o_laser_odometry -> slam_toolbox + RViz
+GO2W real robot SLAM + Nav2 using lidar-only odometry:
+  pointcloud -> scan -> rf2o_laser_odometry -> slam_toolbox -> Nav2 + RViz
 
 Usage:
-  ros2 launch go2w_real slam_rf2o.launch.py
+  ros2 launch go2w_real slam_rf2o.launch.py network_interface:=eth0
 
 This launch assumes:
   - the robot is already standing
-  - driving is done externally, e.g. with the Unitree remote
   - lidar points are available on /unitree/slam_lidar/points
+  - RViz is used to send navigation goals to Nav2
 """
 
 import os
@@ -18,24 +18,28 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     LogInfo,
     RegisterEventHandler,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
 
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
+from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
     slam_toolbox_dir = get_package_share_directory("slam_toolbox")
 
+    network_interface = LaunchConfiguration("network_interface")
     use_rviz = LaunchConfiguration("use_rviz")
     cloud_topic = LaunchConfiguration("cloud_topic")
     lidar_yaw_offset = LaunchConfiguration("lidar_yaw_offset")
@@ -43,13 +47,28 @@ def generate_launch_description():
 
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
     slam_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
+    nav2_params_file = os.path.join(pkg_dir, "config", "nav2_params_foxy.yaml")
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
-    rviz_config_file = os.path.join(pkg_dir, "rviz", "slam_mapping.rviz")
+    rviz_config_file = os.path.join(pkg_dir, "rviz", "nav2_real.rviz")
+    configured_params = RewrittenYaml(
+        source_file=nav2_params_file,
+        root_key="",
+        param_rewrites={"autostart": "true"},
+        convert_types=True,
+    )
+
+    remappings = [("/tf", "tf"), ("/tf_static", "tf_static")]
+
+    declare_net_iface = DeclareLaunchArgument(
+        "network_interface",
+        default_value="eth0",
+        description="Network interface connected to GO2W",
+    )
 
     declare_use_rviz = DeclareLaunchArgument(
         "use_rviz",
         default_value="true",
-        description="Launch RViz for SLAM mapping",
+        description="Launch RViz for SLAM + Nav2 goal testing",
     )
     declare_cloud_topic = DeclareLaunchArgument(
         "cloud_topic",
@@ -110,6 +129,29 @@ def generate_launch_description():
         name="lidar_to_rslidar",
         arguments=["0", "0", "0", lidar_yaw_offset, "0", "0", "lidar", "rslidar"],
         output="screen",
+    )
+
+    go2w_bridge = Node(
+        package="go2w_real",
+        executable="go2w_bridge.py",
+        name="go2w_bridge",
+        output="screen",
+        arguments=[
+            "--network-interface",
+            network_interface,
+        ],
+        remappings=[
+            ("odom", "/sport_odom"),
+            ("imu/data", "/sport_imu"),
+        ],
+        parameters=[
+            {
+                "cmd_vel_timeout": 0.5,
+                "odom_frame": "odom",
+                "base_frame": "base",
+                "publish_odom_tf": False,
+            }
+        ],
     )
 
     pointcloud_relay = Node(
@@ -207,6 +249,62 @@ def generate_launch_description():
         }.items(),
     )
 
+    nav2_lifecycle_nodes = [
+        "controller_server",
+        "planner_server",
+        "recoveries_server",
+        "bt_navigator",
+    ]
+
+    nav2_nodes = GroupAction(
+        actions=[
+            SetParameter("use_sim_time", False),
+            Node(
+                package="nav2_controller",
+                executable="controller_server",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings,
+            ),
+            Node(
+                package="nav2_planner",
+                executable="planner_server",
+                name="planner_server",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings,
+            ),
+            Node(
+                package="nav2_recoveries",
+                executable="recoveries_server",
+                name="recoveries_server",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings,
+            ),
+            Node(
+                package="nav2_bt_navigator",
+                executable="bt_navigator",
+                name="bt_navigator",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings,
+            ),
+            Node(
+                package="nav2_lifecycle_manager",
+                executable="lifecycle_manager",
+                name="lifecycle_manager_navigation",
+                output="screen",
+                parameters=[
+                    {
+                        "autostart": True,
+                        "node_names": nav2_lifecycle_nodes,
+                    }
+                ],
+            ),
+        ],
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -217,21 +315,26 @@ def generate_launch_description():
         condition=IfCondition(use_rviz),
     )
 
-    def launch_slam_after_tf_gate(event, _context):
+    def launch_stack_after_tf_gate(event, _context):
         if event.returncode == 0:
-            return [slam_toolbox]
+            return [
+                slam_toolbox,
+                TimerAction(period=5.0, actions=[nav2_nodes]),
+            ]
 
         return [
             LogInfo(
                 msg="[go2w_real] TF gate failed: odom <- lidar was not "
-                "available within 30s. Not starting slam_toolbox."
+                "available within 30s. Not starting slam_toolbox/Nav2."
             )
         ]
 
     info = LogInfo(
         msg="\n\n========================================\n"
-        "  GO2W Real Robot - SLAM Mapping (RF2O)\n"
-        "  - Use the Unitree remote to drive while slam_toolbox builds /map\n"
+        "  GO2W Real Robot - RF2O SLAM + Nav2\n"
+        "  - RViz opens with the Nav2 layout and a 2D Goal Pose tool\n"
+        "  - Click '2D Goal Pose' in RViz, then drag to set goal position + yaw\n"
+        "  - Robot must already be standing before motion commands are sent\n"
         "  - Odom is estimated from /scan by rf2o_laser_odometry\n"
         "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
         "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
@@ -241,6 +344,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             stdout_linebuf,
+            declare_net_iface,
             declare_use_rviz,
             declare_cloud_topic,
             declare_lidar_yaw_offset,
@@ -250,6 +354,7 @@ def generate_launch_description():
             robot_state_publisher,
             base_to_base_footprint_tf,
             lidar_to_rslidar_tf,
+            go2w_bridge,
             pointcloud_relay,
             pointcloud_to_scan,
             scan_filter,
@@ -258,7 +363,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=wait_for_odom_to_lidar_tf,
-                    on_exit=launch_slam_after_tf_gate,
+                    on_exit=launch_stack_after_tf_gate,
                 )
             ),
             rviz_node,

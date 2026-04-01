@@ -24,8 +24,6 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
 
     network_interface = LaunchConfiguration("network_interface")
-    auto_stand_up = LaunchConfiguration("auto_stand_up")
-    auto_stand_delay = LaunchConfiguration("auto_stand_delay")
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
 
@@ -34,16 +32,6 @@ def generate_launch_description():
         "network_interface",
         default_value="eth0",
         description="Network interface connected to GO2W (e.g. eth0, enp2s0)",
-    )
-    declare_auto_stand_up = DeclareLaunchArgument(
-        "auto_stand_up",
-        default_value="true",
-        description="Automatically call the Unitree Python SDK stand_up routine after launch",
-    )
-    declare_auto_stand_delay = DeclareLaunchArgument(
-        "auto_stand_delay",
-        default_value="3.0",
-        description="Delay in seconds before calling the SDK stand_up routine",
     )
 
     # ===== 1. Robot State Publisher =====
@@ -71,10 +59,6 @@ def generate_launch_description():
         arguments=[
             "--network-interface",
             network_interface,
-            "--auto-stand-up",
-            auto_stand_up,
-            "--auto-stand-delay",
-            auto_stand_delay,
         ],
         parameters=[
             {
@@ -131,8 +115,8 @@ def generate_launch_description():
         msg="\n\n========================================\n"
         "  GO2W Real Robot Bringup\n"
         "  - Bridge node connects via SDK DDS\n"
+        "  - Robot must already be standing before motion commands are sent\n"
         "  - Teleop: ros2 run teleop_twist_keyboard teleop_twist_keyboard\n"
-        "  - Auto stand: sent by go2w_bridge SDK worker (`auto_stand_up:=false` to disable)\n"
         "  - Stand:  ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once\n"
         "  - Stop:   ros2 topic pub /cmd_control std_msgs/String '{data: stop}' --once\n"
         "\n========================================\n"
@@ -141,8 +125,6 @@ def generate_launch_description():
     return LaunchDescription(
         [
             declare_net_iface,
-            declare_auto_stand_up,
-            declare_auto_stand_delay,
             robot_state_publisher,
             go2w_bridge,
             pointcloud_to_scan,
