@@ -13,6 +13,7 @@ install(PROGRAMS
   scripts/multi_source_odom_bridge.py
   scripts/official_slam_odom_bridge.py
   scripts/pointcloud_relay.py
+  scripts/save_map_and_waypoints.py
   scripts/wait_for_transform.py
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -1,165 +1,87 @@
 # go2w_real
 
-ROS 2 package for deploying SLAM + Nav2 navigation on the **real Unitree GO2W** (wheeled quadruped) robot. Bridges ROS 2 `cmd_vel` to the Unitree SDK2 `SportClient` and publishes odometry, IMU, and TF from the robot's `SportModeState`.
+ROS 2 package for mapping and navigation on the real Unitree GO2W.
 
-This is the **sim2real** counterpart of [`go2w_office_sim`](https://github.com/zxj719/go2w_office_sim), sharing the same Nav2/SLAM stack with parameters tuned for real hardware.
+The current mapping workflow in this repository is considered stable for real-robot use:
 
-## Architecture
+- LiDAR source: `/unitree/slam_lidar/points`
+- 2D scan generation: `pointcloud_to_laserscan` + `laser_filters`
+- odometry for mapping: `rf2o_laser_odometry`
+- SLAM backend: `slam_toolbox`
+- robot driving during mapping: Unitree remote control
 
-```
-                          ┌─────────────────────────────────────────┐
-                          │            Real GO2W Robot              │
-                          │  ┌──────────┐  ┌──────────────────┐    │
-                          │  │ L2 LiDAR │  │ SportModeState   │    │
-                          │  │ (4D,360x │  │ (odom,imu,vel)   │    │
-                          │  │  96 FOV) │  │                  │    │
-                          │  └────┬─────┘  └────────┬─────────┘    │
-                          │       │PointCloud2      │ DDS          │
-                          └───────┼─────────────────┼──────────────┘
-                                  │                 │
-                    ┌─────────────┼─────────────────┼──────────────────┐
-                    │ ROS 2       │                 │                  │
-                    │             ▼                 ▼                  │
-                    │  pointcloud_to_laserscan   go2w_bridge           │
-                    │    /unilidar/cloud           /odom, /tf          │
-                    │         │                   /imu/data            │
-                    │         ▼                      │                 │
-                    │    /scan_raw                   │                 │
-                    │         │                      │                 │
-                    │    laser_filters               │                 │
-                    │    (self-occlusion)             │                 │
-                    │         │                      │                 │
-                    │         ▼                      │                 │
-                    │      /scan ──────► SLAM Toolbox ◄── /odom       │
-                    │         │              │                         │
-                    │         │         map->odom TF                   │
-                    │         │              │                         │
-                    │         ▼              ▼                         │
-                    │       Nav2 Stack (MPPI + SmacPlanner2D)          │
-                    │              │                                   │
-                    │         /cmd_vel                                 │
-                    │              │                                   │
-                    │              ▼                                   │
-                    │        go2w_bridge                               │
-                    │     SportClient.Move(vx,vy,vyaw)                │
-                    └─────────────────────────────────────────────────┘
-```
+This path avoids depending on Unitree's odometer service, which may exist on some machines but was not consistently publishing usable odometry in our tested setup.
 
-## Scan Pipeline
+## Status
 
-```
-L2 4D LiDAR (PointCloud2)     Gazebo 3D gpu_lidar (PointCloud2)
-  /unilidar/cloud         or     /pointcloud_raw
-         │                              │
-         ▼                              ▼
-   pointcloud_to_laserscan (height filter: -0.1m ~ 0.3m)
-         │
-    /scan_raw (LaserScan)
-         │
-    laser_filters (LaserScanBoxFilter, removes robot body self-hits)
-         │
-      /scan (LaserScan) → SLAM Toolbox / Nav2 costmaps / collision monitor
-```
-
-## Prerequisites
-
-- ROS 2 Foxy
-- `unitree_sdk2_python` (in workspace)
-- `pointcloud_to_laserscan`: `sudo apt install ros-foxy-pointcloud-to-laserscan`
-- `laser_filters`: `sudo apt install ros-foxy-laser-filters`
-- Nav2, SLAM Toolbox (standard ROS 2 nav stack)
-
-## Network Setup
-
-Connect your PC to GO2W via Ethernet. The robot's default IP is `192.168.123.161`. Configure your PC to be on the same subnet:
-
-```bash
-# Check your interface name
-ip link
-# Set IP (example)
-sudo ip addr add 192.168.123.100/24 dev eth0
-```
-
-## Usage
-
-### 1. Basic Bringup (teleop)
-
-```bash
-ros2 launch go2w_real bringup.launch.py network_interface:=eth0
-
-# Auto stand_up is enabled by default.
-# Disable it if needed:
-ros2 launch go2w_real bringup.launch.py network_interface:=eth0 auto_stand_up:=false
-
-# Or trigger stand_up manually:
-ros2 run go2w_real go2_motion_command.py --action stand_up --network-interface eth0
-ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
-
-# Teleop
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
-```
-
-### 2. SLAM + Nav2 (full navigation)
-
-```bash
-ros2 launch go2w_real nav2.launch.py network_interface:=eth0
-
-# Auto stand_up is enabled by default.
-# Disable it if needed:
-ros2 launch go2w_real nav2.launch.py network_interface:=eth0 auto_stand_up:=false
-
-# The default LiDAR source now matches the working auto_explore pipeline:
-#   /unitree/slam_lidar/points
-# Override it if your robot publishes a different topic:
-ros2 launch go2w_real nav2.launch.py network_interface:=eth0 \
-  cloud_topic:=/unitree/slam_lidar/points
-
-# Disable RViz on a headless robot:
-ros2 launch go2w_real nav2.launch.py network_interface:=eth0 use_rviz:=false
-
-# Set 2D Goal in RViz to navigate
-```
-
-### 3. Official Unitree SLAM + Nav2 (no slam_toolbox)
-
-If official Unitree SLAM is already running on the robot and publishing:
-`/global_map`, `/unitree/slam_mapping/odom`, `/unitree/slam_lidar/points`
-
-```bash
-ros2 launch go2w_real nav2_official_slam.launch.py network_interface:=eth0
-```
-
-### 4. SLAM Mapping with RF2O lidar odometry
-
-If Unitree's odometer service is unavailable, use lidar-only odometry:
+Recommended mapping launch:
 
 ```bash
 ros2 launch go2w_real slam_rf2o.launch.py
-
-# Override the pointcloud topic if needed:
-ros2 launch go2w_real slam_rf2o.launch.py \
-  cloud_topic:=/unitree/slam_lidar/points
 ```
 
-This launch assumes the robot is already standing and you are driving with the
-Unitree remote.
+This is the recommended path for:
 
-### 5. Control Commands
+- manual map recording
+- RViz visualization
+- later waypoint collection on the finished map
+
+Experimental or environment-dependent paths still exist in this package, but `slam_rf2o.launch.py` is the default recommendation for real mapping.
+
+## Tested Data Flow
+
+The mature mapping stack is:
+
+```text
+/unitree/slam_lidar/points
+  -> pointcloud_relay.py
+  -> /cloud_relayed
+  -> pointcloud_to_laserscan
+  -> /scan_raw
+  -> laser_filters
+  -> /scan
+  -> rf2o_laser_odometry
+  -> /odom and odom->base TF
+  -> slam_toolbox
+  -> /map and map->odom TF
+```
+
+Useful observed topics in the tested setup:
+
+- `/unitree/slam_lidar/points`: stable and suitable as the mapping point cloud input
+- `/utlidar/imu`: stable and published at high rate
+- `/utlidar/robot_odom`: topic may exist but was not reliably publishing usable samples
+- `/utlidar/robot_pose`: topic may exist but was not reliably publishing usable samples
+- `rt/lf/sportmodestate`: reachable through SDK, but in our tests often reported zero position and velocity during mapping work
+
+Because of that, lidar-derived odometry is the preferred mapping source here.
+
+## Requirements
+
+- Ubuntu + ROS 2 Foxy
+- `pointcloud_to_laserscan`
+- `laser_filters`
+- `slam_toolbox`
+- `nav2_map_server`
+- `rf2o_laser_odometry`
+- Unitree ROS 2 environment sourced when needed
+
+Typical install commands:
 
 ```bash
-# Python SDK one-shot helper
-ros2 run go2w_real go2_motion_command.py --action stand_up --network-interface eth0
-ros2 run go2w_real go2_motion_command.py --action recovery --network-interface eth0
+sudo apt install ros-foxy-pointcloud-to-laserscan
+sudo apt install ros-foxy-laser-filters
+sudo apt install ros-foxy-slam-toolbox
+sudo apt install ros-foxy-nav2-map-server
+```
 
-# Stand up / down
-ros2 topic pub /cmd_control std_msgs/String '{data: stand_up}' --once
-ros2 topic pub /cmd_control std_msgs/String '{data: stand_down}' --once
+Build:
 
-# Emergency stop
-ros2 topic pub /cmd_control std_msgs/String '{data: damp}' --once
-
-# Recovery (if robot falls)
-ros2 topic pub /cmd_control std_msgs/String '{data: recovery}' --once
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+colcon build --packages-select rf2o_laser_odometry go2w_real
+source install/setup.bash
 ```
 
 ## Workspace Layout
@@ -167,62 +89,229 @@ ros2 topic pub /cmd_control std_msgs/String '{data: recovery}' --once
 ```text
 ros_ws/src/
 ├── go2w_real/
-│   ├── scripts/
-│   │   ├── go2w_bridge.py          # Core: cmd_vel <-> SportClient, state -> odom/tf/imu
-│   │   ├── go2_motion_command.py   # One-shot SDK helper (stand_up, recovery, etc.)
-│   │   └── wait_for_transform.py   # Gates SLAM/Nav2 startup on a valid TF chain
 │   ├── config/
-│   │   ├── nav2_params.yaml        # Nav2 (conservative speeds for real hardware)
-│   │   ├── slam_params.yaml        # SLAM Toolbox
-│   │   └── laser_filter.yaml       # Self-occlusion box filter
 │   ├── launch/
-│   │   ├── bringup.launch.py       # Bridge + RSP + lidar pipeline (teleop-ready)
-│   │   ├── nav2.launch.py          # Full: bridge + SLAM + Nav2 + RViz
-│   │   ├── nav2_official_slam.launch.py
-│   │   ├── slam_mapping.launch.py  # Mapping with SDK/sport-state odom
-│   │   └── slam_rf2o.launch.py     # Mapping with lidar-derived RF2O odom
+│   ├── meshes/
 │   ├── rviz/
-│   │   └── nav2_real.rviz          # RViz layout: robot, map, scan, TF, odom
-│   ├── urdf/
-│   │   ├── go2w_real.urdf.xacro    # TF tree (no Gazebo plugins)
-│   │   └── const.xacro
-│   └── meshes/                     # Local GO2W meshes; package is self-contained
-└── go2w_auto_explore/
-    ├── launch/auto_explore.launch.py
-    ├── config/
-    ├── docs/
-    ├── rviz/
-    ├── scripts/
-    ├── src/
-    └── urdf/
+│   ├── scripts/
+│   └── urdf/
+├── go2w_auto_explore/
+└── rf2o_laser_odometry/
 ```
 
-`go2w_auto_explore` is now a separate top-level package in the workspace, not a subdirectory under `go2w_real`.
+Important files:
 
-## Key Differences from Simulation
+- [`launch/slam_rf2o.launch.py`](launch/slam_rf2o.launch.py): stable mapping launch
+- [`launch/slam_mapping.launch.py`](launch/slam_mapping.launch.py): older mapping launch using SDK odom bridge
+- [`launch/nav2.launch.py`](launch/nav2.launch.py): full Nav2 path
+- [`scripts/save_map_and_waypoints.py`](scripts/save_map_and_waypoints.py): map + waypoint recorder
 
-| Aspect | Sim (`go2w_office_sim`) | Real (`go2w_real`) |
-|--------|------------------------|-------------------|
-| Actuation | Gazebo DiffDrive plugin | `SportClient.Move()` via SDK DDS |
-| Odometry | Gazebo ground-truth | `SportModeState` (SDK) |
-| LiDAR | Gazebo 3D gpu_lidar | Unitree L2 4D LiDAR |
-| LiDAR topic | `/pointcloud_raw` | `/unilidar/cloud` |
-| local_costmap frame | `map` (TF timestamp bug) | `odom` (no bug on real hw) |
-| `vx_max` | 0.5 m/s | 0.35 m/s (safety) |
-| Max accelerations | 2.5 / 3.2 | 1.5 / 2.5 (gentler) |
+## Network Setup
 
-## Unitree L2 4D LiDAR Specs
+Connect the PC to the robot through Ethernet and put the PC on the robot subnet.
 
-| Spec | Value |
-|------|-------|
-| FOV | 360 x 96 (horizontal x vertical) |
-| Range | 0.05 - 30 m |
-| Point rate | 64,000 pts/s |
-| Rotation speed | 5.55 Hz |
-| Accuracy | <= 2 cm |
-| Communication | Ethernet UDP |
-| Weight | 230 g |
-| Built-in IMU | 3-axis accel + 3-axis gyro |
+Example:
+
+```bash
+ip link
+sudo ip addr add 192.168.123.100/24 dev eth0
+```
+
+Robot default IP is commonly `192.168.123.161`.
+
+## Quick Start: Stable Mapping Workflow
+
+### 1. Source the environment
+
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+source /home/unitree/unitree_ros2/setup.sh
+source install/setup.bash
+```
+
+### 2. Make sure the lidar is publishing
+
+```bash
+ros2 topic list | grep unitree/slam_lidar/points
+ros2 topic hz /unitree/slam_lidar/points
+```
+
+Expected input topic:
+
+- `/unitree/slam_lidar/points`
+
+### 3. Launch mapping
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py
+```
+
+Optional overrides:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py \
+  cloud_topic:=/unitree/slam_lidar/points \
+  use_rviz:=true
+```
+
+### 4. Drive the robot with the Unitree remote
+
+Do not use ROS teleop in the mature mapping workflow unless you explicitly want it.
+
+Recommended practice:
+
+- keep speed low
+- avoid aggressive spinning in place
+- prefer smooth loops and revisits
+- let SLAM close loops naturally
+
+### 5. Save the map and fixed navigation points
+
+Run the recorder in another terminal:
+
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+source install/setup.bash
+ros2 run go2w_real save_map_and_waypoints.py --map-prefix ~/maps/go2w_map
+```
+
+Then:
+
+- use RViz `Publish Point` to click a point on the map
+- enter the point name in the terminal
+- enter yaw in degrees, or press Enter to use the robot's current heading
+- repeat for all fixed points
+- press `Ctrl+C` when finished
+
+The script will:
+
+- save the occupancy map
+- save waypoint metadata
+
+Generated files:
+
+- `~/maps/go2w_map.yaml`
+- `~/maps/go2w_map.pgm`
+- `~/maps/go2w_map_waypoints.yaml`
+
+## Waypoint File Format
+
+Waypoints are stored as YAML with:
+
+- point name
+- frame id
+- position
+- yaw
+- quaternion orientation
+
+Example:
+
+```yaml
+map:
+  prefix: '/home/unitree/maps/go2w_map'
+  yaml: '/home/unitree/maps/go2w_map.yaml'
+  image: '/home/unitree/maps/go2w_map.pgm'
+waypoints:
+  - name: 'dock'
+    frame_id: 'map'
+    position:
+      x: 1.250000
+      y: -0.480000
+      z: 0.000000
+    yaw: 1.570796
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.707107
+      w: 0.707107
+```
+
+## Launch Files
+
+### Stable / recommended
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py
+```
+
+Use this when:
+
+- you want reliable real-world map building
+- official odometer service is unavailable or inconsistent
+- you are manually driving with the remote
+
+### Older SDK odom mapping path
+
+```bash
+ros2 launch go2w_real slam_mapping.launch.py network_interface:=eth0
+```
+
+This keeps the Unitree SDK bridge in the loop and tries to use sport/odom state.
+It can still be useful for debugging, but it is not the primary recommended mapping path.
+
+### Full Nav2 bringup
+
+```bash
+ros2 launch go2w_real nav2.launch.py network_interface:=eth0
+```
+
+Use this after you already have a map and want to keep working on navigation integration.
+
+## Known Good Assumptions
+
+The current mapping recommendation assumes:
+
+- the robot is already standing
+- the remote control is used for driving
+- `/unitree/slam_lidar/points` is available
+- RViz can run locally, or `use_rviz:=false` is used on headless systems
+
+## Troubleshooting
+
+### No map growth in RViz
+
+Check:
+
+```bash
+ros2 topic hz /unitree/slam_lidar/points
+ros2 topic hz /scan
+ros2 topic hz /odom
+```
+
+You need all three to move during mapping:
+
+- point cloud in
+- scan out
+- odom out
+
+### RViz starts but robot or map is missing
+
+Check TF:
+
+```bash
+ros2 run tf2_ros tf2_echo odom base
+ros2 run tf2_ros tf2_echo map odom
+```
+
+### Official odom topics exist but have no samples
+
+This was observed in the tested setup. Topic names may appear, but usable odometry may still not be published. That is why RF2O is the recommended default.
+
+### Need to save only waypoints, not the map
+
+```bash
+ros2 run go2w_real save_map_and_waypoints.py \
+  --map-prefix ~/maps/go2w_map \
+  --no-save-map
+```
+
+## Repository Notes
+
+- `go2w_auto_explore` has been split into its own top-level package
+- `rf2o_laser_odometry` is included in the workspace and patched for Foxy compatibility
+- `go2w_bridge.py` still supports SDK-based motion / state bridging for other bringup flows
 
 ## License
 
