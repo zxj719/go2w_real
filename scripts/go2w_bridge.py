@@ -38,8 +38,10 @@ for sdk_path in SDK_SEARCH_PATHS:
 
 
 DEFAULT_STATE_TOPICS = (
-    "rt/lf/sportmodestate",  # GO2W
-    "rt/sportmodestate",     # GO2 / older examples
+    "rt/odommodestate",       # official odom state, high frequency
+    "rt/lf/odommodestate",    # official odom state, low frequency
+    "rt/lf/sportmodestate",   # GO2W fallback
+    "rt/sportmodestate",      # GO2 / older examples fallback
 )
 NO_STATE_WARN_PERIOD = 5.0
 POSITION_USEFUL_NORM_EPS = 1e-3
@@ -146,7 +148,7 @@ def _sdk2_worker(
                 )
 
     print(
-        "[go2w_bridge] Subscribing SportModeState topics: "
+        "[go2w_bridge] Subscribing odom/sport state topics: "
         + ", ".join(DEFAULT_STATE_TOPICS),
         flush=True,
     )
