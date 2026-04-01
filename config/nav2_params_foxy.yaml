@@ -65,17 +65,17 @@ controller_server:
       min_vel_y: 0.0
       max_vel_x: 0.25
       max_vel_y: 0.0
-      max_vel_theta: 0.8
-      min_vel_theta: 0.10
+      max_vel_theta: 0.45
+      min_vel_theta: 0.05
       min_speed_xy: 0.0
       max_speed_xy: 0.25
-      min_speed_theta: 0.10
+      min_speed_theta: 0.05
       acc_lim_x: 1.2
       acc_lim_y: 0.0
-      acc_lim_theta: 2.5
+      acc_lim_theta: 1.5
       decel_lim_x: -1.2
       decel_lim_y: 0.0
-      decel_lim_theta: -2.5
+      decel_lim_theta: -1.5
       vx_samples: 15
       vy_samples: 1
       vtheta_samples: 20
@@ -95,8 +95,8 @@ controller_server:
       GoalAlign.forward_point_distance: 0.2
       PathDist.scale: 24.0
       GoalDist.scale: 10.0
-      RotateToGoal.scale: 2.0
-      RotateToGoal.slowing_factor: 3.0
+      RotateToGoal.scale: 1.0
+      RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
 
 local_costmap:
@@ -197,6 +197,6 @@ recoveries_server:
     robot_base_frame: base
     transform_tolerance: 1.0
     simulate_ahead_time: 1.0
-    max_rotational_vel: 0.8
-    min_rotational_vel: 0.4
-    rotational_acc_lim: 2.5
+    max_rotational_vel: 0.45
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 1.5

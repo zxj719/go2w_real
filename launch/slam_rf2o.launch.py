@@ -19,7 +19,6 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
-    IncludeLaunchDescription,
     LogInfo,
     RegisterEventHandler,
     SetEnvironmentVariable,
@@ -27,7 +26,6 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
 
 from launch_ros.actions import Node, SetParameter
@@ -210,6 +208,7 @@ def generate_launch_description():
         executable="rf2o_laser_odometry_node",
         name="rf2o_laser_odometry",
         output="screen",
+        arguments=["--ros-args", "--log-level", "warn"],
         parameters=[
             {
                 "laser_scan_topic": "/scan",
@@ -218,7 +217,9 @@ def generate_launch_description():
                 "base_frame_id": "base",
                 "odom_frame_id": "odom",
                 "init_pose_from_topic": "",
-                "freq": 12.0,
+                # Keep RF2O slightly below the 10 Hz scan pipeline to avoid
+                # spinning idle cycles that only print "Waiting for laser_scans....".
+                "freq": 9.0,
             }
         ],
     )
@@ -239,14 +240,17 @@ def generate_launch_description():
         ],
     )
 
-    slam_toolbox = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(slam_toolbox_dir, "launch", "online_async_launch.py")
-        ),
-        launch_arguments={
-            "use_sim_time": "false",
-            "slam_params_file": slam_params_file,
-        }.items(),
+    slam_toolbox = Node(
+        package="slam_toolbox",
+        executable="async_slam_toolbox_node",
+        name="slam_toolbox",
+        output="screen",
+        arguments=["--ros-args", "--log-level", "warn"],
+        parameters=[
+            slam_params_file,
+            {"use_sim_time": False},
+        ],
+        remappings=remappings,
     )
 
     nav2_lifecycle_nodes = [
