@@ -104,7 +104,9 @@ Important files:
 
 - [`launch/slam_rf2o.launch.py`](launch/slam_rf2o.launch.py): unified RF2O + slam_toolbox + Nav2 launch
 - [`rviz/nav2_real.rviz`](rviz/nav2_real.rviz): RViz layout with `2D Goal Pose`, map, costmaps, and plans
-- [`scripts/save_map_and_waypoints.py`](scripts/save_map_and_waypoints.py): map + waypoint recorder
+- [`scripts/save_map_and_waypoints.py`](scripts/save_map_and_waypoints.py): fixed waypoint recorder
+- [`scripts/navigate_to_waypoint.py`](scripts/navigate_to_waypoint.py): terminal waypoint selector that sends goals to Nav2
+- [`scripts/profile_nav_stack.py`](scripts/profile_nav_stack.py): CPU profiler for the SLAM + Nav2 runtime stack
 
 ## Network Setup
 
@@ -183,7 +185,7 @@ Then:
 - watch `/plan`, `/local_plan`, `/global_costmap/costmap`, and `/local_costmap/costmap`
 - if you want to stop immediately, publish a zero command or cancel the Nav2 goal
 
-### 6. Save the map and fixed navigation points
+### 6. Save fixed navigation points
 
 Run the recorder in another terminal:
 
@@ -191,27 +193,98 @@ Run the recorder in another terminal:
 cd ~/ros_ws
 source /opt/ros/foxy/setup.bash
 source install/setup.bash
-ros2 run go2w_real save_map_and_waypoints.py --map-prefix ~/maps/go2w_map
+ros2 run go2w_real save_map_and_waypoints.py
 ```
 
 Then:
 
 - use RViz `Publish Point` to click a point on the map
-- enter the point name in the terminal
-- enter yaw in degrees, or press Enter to use the robot's current heading
+- the script records the clicked position first
+- the script records the robot's current heading next
+- enter the point name in the terminal last
 - repeat for all fixed points
 - press `Ctrl+C` when finished
 
 The script will:
 
-- save the occupancy map
-- save waypoint metadata
+- save waypoint metadata only
+- write the YAML to `/home/unitree/ros_ws/src/go2w_waypoints.yaml` by default
 
 Generated files:
 
-- `~/maps/go2w_map.yaml`
-- `~/maps/go2w_map.pgm`
-- `~/maps/go2w_map_waypoints.yaml`
+- `/home/unitree/ros_ws/src/go2w_waypoints.yaml`
+
+### 7. Navigate to a saved waypoint from the terminal
+
+The waypoint navigator reads a waypoint YAML file, shows all available targets,
+and sends the selected target to Nav2's `/navigate_to_pose` action.
+
+Default input file:
+
+- `/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml`
+
+List available waypoints only:
+
+```bash
+ros2 run go2w_real navigate_to_waypoint.py --list-only
+```
+
+Start the interactive selector:
+
+```bash
+ros2 run go2w_real navigate_to_waypoint.py
+```
+
+Then:
+
+- review the printed waypoint list
+- enter either the waypoint index or the waypoint name
+- the script sends that pose to Nav2
+- the terminal prints navigation feedback until the goal finishes
+- enter another waypoint, or `q` to quit
+
+Send one waypoint directly without the prompt:
+
+```bash
+ros2 run go2w_real navigate_to_waypoint.py --waypoint wp_03
+```
+
+If your waypoint YAML is stored elsewhere:
+
+```bash
+ros2 run go2w_real navigate_to_waypoint.py \
+  --waypoint-file /home/unitree/ros_ws/src/go2w_waypoints.yaml
+```
+
+### 8. CPU profiling for SLAM + Nav2
+
+Use the built-in profiler when you want a quick CPU breakdown of the running
+stack without manually hunting through `htop`.
+
+```bash
+ros2 run go2w_real profile_nav_stack.py
+```
+
+The profiler groups CPU usage by runtime component, including:
+
+- `go2w_bridge`
+- `pointcloud_to_laserscan`
+- `laser_filters`
+- `rf2o_laser_odometry`
+- `slam_toolbox`
+- `controller_server`
+- `planner_server`
+- `recoveries_server`
+- `bt_navigator`
+- `rviz2`
+- `navigate_to_waypoint`
+
+Useful options:
+
+```bash
+ros2 run go2w_real profile_nav_stack.py --interval 0.5 --show-missing
+ros2 run go2w_real profile_nav_stack.py --samples 20
+```
 
 ## Waypoint File Format
 
@@ -226,10 +299,6 @@ Waypoints are stored as YAML with:
 Example:
 
 ```yaml
-map:
-  prefix: '/home/unitree/maps/go2w_map'
-  yaml: '/home/unitree/maps/go2w_map.yaml'
-  image: '/home/unitree/maps/go2w_map.pgm'
 waypoints:
   - name: 'dock'
     frame_id: 'map'
@@ -300,19 +369,18 @@ ros2 run tf2_ros tf2_echo map odom
 
 This was observed in the tested setup. Topic names may appear, but usable odometry may still not be published. That is why RF2O is the recommended default.
 
-### Need to save only waypoints, not the map
+### Need a custom waypoint YAML path
 
 ```bash
 ros2 run go2w_real save_map_and_waypoints.py \
-  --map-prefix ~/maps/go2w_map \
-  --no-save-map
+  --waypoint-file /home/unitree/ros_ws/src/my_waypoints.yaml
 ```
 
 ## Repository Notes
 
 - `go2w_auto_explore` has been split into its own top-level package
 - `rf2o_laser_odometry` is included in the workspace and patched for Foxy compatibility
-- `go2w_bridge.py` still supports SDK-based motion / state bridging for other bringup flows
+- the active script set is now focused on the RF2O + slam_toolbox + Nav2 workflow
 
 ## License
 

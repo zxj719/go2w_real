@@ -80,8 +80,8 @@ def generate_launch_description():
     )
     declare_rviz_software_rendering = DeclareLaunchArgument(
         "rviz_software_rendering",
-        default_value="true",
-        description="Force RViz to use software OpenGL rendering",
+        default_value="false",
+        description="Force RViz to use software OpenGL rendering if hardware GL is unstable",
     )
 
     stdout_linebuf = SetEnvironmentVariable(
@@ -240,6 +240,22 @@ def generate_launch_description():
         ],
     )
 
+    wait_for_map_to_lidar_tf = Node(
+        package="go2w_real",
+        executable="wait_for_transform.py",
+        name="wait_for_map_to_lidar_tf",
+        output="screen",
+        parameters=[
+            {
+                "target_frame": "map",
+                "source_frame": "lidar",
+                "timeout_sec": 60.0,
+                "poll_period": 0.2,
+                "log_period": 2.0,
+            }
+        ],
+    )
+
     slam_toolbox = Node(
         package="slam_toolbox",
         executable="async_slam_toolbox_node",
@@ -259,6 +275,19 @@ def generate_launch_description():
         "recoveries_server",
         "bt_navigator",
     ]
+
+    lifecycle_manager_navigation = Node(
+        package="nav2_lifecycle_manager",
+        executable="lifecycle_manager",
+        name="lifecycle_manager_navigation",
+        output="screen",
+        parameters=[
+            {
+                "autostart": True,
+                "node_names": nav2_lifecycle_nodes,
+            }
+        ],
+    )
 
     nav2_nodes = GroupAction(
         actions=[
@@ -294,17 +323,12 @@ def generate_launch_description():
                 parameters=[configured_params],
                 remappings=remappings,
             ),
-            Node(
-                package="nav2_lifecycle_manager",
-                executable="lifecycle_manager",
-                name="lifecycle_manager_navigation",
-                output="screen",
-                parameters=[
-                    {
-                        "autostart": True,
-                        "node_names": nav2_lifecycle_nodes,
-                    }
-                ],
+            # Delay lifecycle_manager slightly so the lifecycle servers are
+            # already discoverable when autostart kicks in. Without this,
+            # Foxy occasionally leaves the whole Nav2 stack unconfigured.
+            TimerAction(
+                period=2.0,
+                actions=[lifecycle_manager_navigation],
             ),
         ],
     )
@@ -321,15 +345,26 @@ def generate_launch_description():
 
     def launch_stack_after_tf_gate(event, _context):
         if event.returncode == 0:
-            return [
-                slam_toolbox,
-                TimerAction(period=5.0, actions=[nav2_nodes]),
-            ]
+            return [slam_toolbox]
 
         return [
             LogInfo(
                 msg="[go2w_real] TF gate failed: odom <- lidar was not "
                 "available within 30s. Not starting slam_toolbox/Nav2."
+            )
+        ]
+
+    def launch_visualization_and_nav_after_map_tf_gate(event, _context):
+        if event.returncode == 0:
+            return [
+                nav2_nodes,
+                rviz_node,
+            ]
+
+        return [
+            LogInfo(
+                msg="[go2w_real] TF gate failed: map <- lidar was not "
+                "available within 60s. Not starting RViz/Nav2."
             )
         ]
 
@@ -364,13 +399,19 @@ def generate_launch_description():
             scan_filter,
             rf2o_node,
             wait_for_odom_to_lidar_tf,
+            wait_for_map_to_lidar_tf,
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=wait_for_odom_to_lidar_tf,
                     on_exit=launch_stack_after_tf_gate,
                 )
             ),
-            rviz_node,
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=wait_for_map_to_lidar_tf,
+                    on_exit=launch_visualization_and_nav_after_map_tf_gate,
+                )
+            ),
             info,
         ]
     )

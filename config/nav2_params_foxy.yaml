@@ -8,7 +8,10 @@ bt_navigator:
     robot_base_frame: base
     odom_topic: /odom
     bt_loop_duration: 50
-    default_server_timeout: 20
+    # Nav2 expects this timeout in milliseconds. 20 ms is too short for
+    # FollowPath goal handshakes on the real robot stack and causes
+    # "send_goal failed" right after planning succeeds.
+    default_server_timeout: 5000
     default_bt_xml_filename: "/opt/ros/foxy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_and_recovery.xml"
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node

@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
 """
-Record named navigation waypoints from RViz Publish Point and save the map on exit.
+Record named navigation waypoints from RViz Publish Point.
 
 Workflow:
   1. Start SLAM and drive the robot to build the map.
   2. Run this script.
   3. In RViz, use "Publish Point" to click waypoint positions.
-  4. For each clicked point, enter a waypoint name in the terminal.
-  5. Optionally enter a yaw angle in degrees; pressing Enter uses the robot's
-     current heading in the clicked point's frame.
-  6. Press Ctrl+C when finished. The script writes the waypoint YAML and runs
-     nav2_map_server's map_saver_cli.
+  4. The script records the clicked position.
+  5. The script reads the robot's current heading from TF.
+  6. Enter the waypoint name in the terminal.
+  7. Press Ctrl+C when finished. The script writes waypoint YAML only.
 """
 
 import math
 import os
 import queue
-import shutil
-import subprocess
 import sys
 import threading
 
 
-DEFAULT_MAP_PREFIX = os.path.expanduser("~/maps/go2w_map")
+DEFAULT_WAYPOINT_FILE = "/home/unitree/ros_ws/src/go2w_waypoints.yaml"
 DEFAULT_CLICKED_POINT_TOPIC = "/clicked_point"
 DEFAULT_MAP_FRAME = "map"
 DEFAULT_BASE_FRAME = "base"
@@ -33,25 +30,21 @@ def _print_help():
         "Usage: ros2 run go2w_real save_map_and_waypoints.py [options] [--ros-args ...]\n"
         "\n"
         "Options:\n"
-        "  --map-prefix PATH          Map save prefix, default: ~/maps/go2w_map\n"
-        "  --waypoint-file PATH       Waypoint YAML path, default: <map-prefix>_waypoints.yaml\n"
+        "  --waypoint-file PATH       Waypoint YAML path, default: /home/unitree/ros_ws/src/go2w_waypoints.yaml\n"
         "  --clicked-point-topic TOPIC\n"
         "                             RViz Publish Point topic, default: /clicked_point\n"
         "  --map-frame FRAME          Map frame for saved waypoints, default: map\n"
         "  --base-frame FRAME         Robot base frame used for default yaw, default: base\n"
-        "  --no-save-map              Only write waypoint YAML, skip map_saver_cli\n"
         "  -h, --help                 Show this help message\n"
     )
 
 
 def _parse_cli_args(raw_args):
     config = {
-        "map_prefix": DEFAULT_MAP_PREFIX,
-        "waypoint_file": None,
+        "waypoint_file": DEFAULT_WAYPOINT_FILE,
         "clicked_point_topic": DEFAULT_CLICKED_POINT_TOPIC,
         "map_frame": DEFAULT_MAP_FRAME,
         "base_frame": DEFAULT_BASE_FRAME,
-        "save_map_on_shutdown": True,
     }
     ros_args = []
 
@@ -62,14 +55,6 @@ def _parse_cli_args(raw_args):
         if arg in ("-h", "--help"):
             _print_help()
             raise SystemExit(0)
-        if arg == "--map-prefix" and i + 1 < len(raw_args):
-            config["map_prefix"] = os.path.expanduser(raw_args[i + 1])
-            i += 2
-            continue
-        if arg.startswith("--map-prefix="):
-            config["map_prefix"] = os.path.expanduser(arg.split("=", 1)[1])
-            i += 1
-            continue
         if arg == "--waypoint-file" and i + 1 < len(raw_args):
             config["waypoint_file"] = os.path.expanduser(raw_args[i + 1])
             i += 2
@@ -102,16 +87,9 @@ def _parse_cli_args(raw_args):
             config["base_frame"] = arg.split("=", 1)[1]
             i += 1
             continue
-        if arg == "--no-save-map":
-            config["save_map_on_shutdown"] = False
-            i += 1
-            continue
 
         ros_args.append(arg)
         i += 1
-
-    if config["waypoint_file"] is None:
-        config["waypoint_file"] = config["map_prefix"] + "_waypoints.yaml"
 
     return config, ros_args
 
@@ -143,12 +121,10 @@ class MapWaypointRecorder:
         import tf2_ros
 
         self.node = node
-        self.map_prefix = config["map_prefix"]
         self.waypoint_file = config["waypoint_file"]
         self.clicked_point_topic = config["clicked_point_topic"]
         self.map_frame = config["map_frame"]
         self.base_frame = config["base_frame"]
-        self.save_map_on_shutdown = config["save_map_on_shutdown"]
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(
@@ -176,8 +152,9 @@ class MapWaypointRecorder:
 
         self.node.get_logger().info(
             "Waypoint recorder ready. Use RViz Publish Point on "
-            f"{self.clicked_point_topic}, then name each point in this terminal. "
-            "Press Ctrl+C to save the map and exit."
+            f"{self.clicked_point_topic}. For each point, the script records "
+            "the clicked position, reads the robot's current heading, then "
+            f"asks for the waypoint name. YAML is written to {self.waypoint_file}."
         )
 
     def _clicked_point_cb(self, msg):
@@ -190,8 +167,8 @@ class MapWaypointRecorder:
         }
         self.pending_points.put(event)
         self.node.get_logger().info(
-            f"Queued clicked point in {frame_id}: "
-            f"({event['x']:.3f}, {event['y']:.3f}, {event['z']:.3f})"
+            f"Recorded clicked position in {frame_id}: "
+            f"x={event['x']:.3f}, y={event['y']:.3f}, z={event['z']:.3f}"
         )
 
     def _default_name(self):
@@ -269,20 +246,28 @@ class MapWaypointRecorder:
             default_yaw_deg = math.degrees(default_yaw)
 
             print(
-                "\n[waypoint] clicked point: "
+                "\n[waypoint] step 1/3 position recorded: "
                 f"frame={event['frame_id']} "
                 f"x={event['x']:.3f} y={event['y']:.3f} z={event['z']:.3f}",
                 flush=True,
             )
             if has_tf_yaw:
                 print(
-                    f"[waypoint] default yaw from current robot heading: {default_yaw_deg:.1f} deg",
+                    "[waypoint] step 2/3 current heading recorded: "
+                    f"{default_yaw_deg:.1f} deg",
+                    flush=True,
+                )
+            else:
+                print(
+                    "[waypoint] step 2/3 current heading unavailable, "
+                    "using 0.0 deg",
                     flush=True,
                 )
 
             try:
                 raw_name = input(
-                    f"[waypoint] name [{default_name}] ('skip' to ignore): "
+                    f"[waypoint] step 3/3 waypoint name [{default_name}] "
+                    "('skip' to ignore): "
                 ).strip()
             except EOFError:
                 raw_name = ""
@@ -294,38 +279,11 @@ class MapWaypointRecorder:
                 continue
 
             waypoint_name = self._unique_name(raw_name or default_name)
-
-            try:
-                raw_yaw_deg = input(
-                    f"[waypoint] yaw_deg [{default_yaw_deg:.1f}]: "
-                ).strip()
-            except EOFError:
-                raw_yaw_deg = ""
-
-            if self.stop_event.is_set():
-                break
-
-            if raw_yaw_deg.lower() == "skip":
-                self.node.get_logger().info("Skipped clicked point.")
-                continue
-
-            if raw_yaw_deg:
-                try:
-                    yaw = math.radians(float(raw_yaw_deg))
-                except ValueError:
-                    self.node.get_logger().warn(
-                        f"Invalid yaw '{raw_yaw_deg}', using default {default_yaw_deg:.1f} deg."
-                    )
-                    yaw = default_yaw
-            else:
-                yaw = default_yaw
-
-            waypoint = self._make_waypoint(event, waypoint_name, yaw)
+            waypoint = self._make_waypoint(event, waypoint_name, default_yaw)
             self._store_waypoint(waypoint, "interactive")
 
     def _write_waypoints_file(self):
         waypoint_path = os.path.expanduser(self.waypoint_file)
-        map_prefix = os.path.expanduser(self.map_prefix)
         os.makedirs(os.path.dirname(waypoint_path) or ".", exist_ok=True)
 
         tmp_path = waypoint_path + ".tmp"
@@ -333,10 +291,6 @@ class MapWaypointRecorder:
             waypoints_snapshot = list(self.waypoints)
 
         with open(tmp_path, "w", encoding="utf-8") as handle:
-            handle.write("map:\n")
-            handle.write(f"  prefix: {_yaml_quote(map_prefix)}\n")
-            handle.write(f"  yaml: {_yaml_quote(map_prefix + '.yaml')}\n")
-            handle.write(f"  image: {_yaml_quote(map_prefix + '.pgm')}\n")
             if not waypoints_snapshot:
                 handle.write("waypoints: []\n")
             else:
@@ -376,52 +330,13 @@ class MapWaypointRecorder:
                 f"Auto-saved {drained_count} queued clicked points during shutdown."
             )
 
-    def _save_map(self):
-        if not self.save_map_on_shutdown:
-            self.node.get_logger().info("Skipping map save on shutdown.")
-            return
-
-        os.makedirs(os.path.dirname(self.map_prefix) or ".", exist_ok=True)
-        ros2_bin = shutil.which("ros2")
-        if ros2_bin is None:
-            self.node.get_logger().error(
-                "Could not find 'ros2' in PATH, skipping map save."
-            )
-            return
-
-        cmd = [ros2_bin, "run", "nav2_map_server", "map_saver_cli", "-f", self.map_prefix]
-        self.node.get_logger().info(
-            f"Saving map to prefix {self.map_prefix} with map_saver_cli..."
-        )
-
-        try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=120,
-                env=os.environ.copy(),
-            )
-        except Exception as exc:
-            self.node.get_logger().error(f"Map save failed: {exc}")
-            return
-
-        if result.returncode != 0:
-            self.node.get_logger().error(
-                f"map_saver_cli failed with code {result.returncode}:\n{result.stdout}"
-            )
-            return
-
-        self.node.get_logger().info(
-            f"Map saved successfully:\n{result.stdout.strip()}"
-        )
-
     def shutdown(self):
         self.stop_event.set()
         self._drain_pending_points()
         self._write_waypoints_file()
-        self._save_map()
+        self.node.get_logger().info(
+            f"Waypoint YAML written to {os.path.expanduser(self.waypoint_file)}"
+        )
 
 
 def main(args=None):
