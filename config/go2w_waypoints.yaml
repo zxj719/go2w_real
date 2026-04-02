@@ -1,0 +1,31 @@
+map:
+  serialized_prefix: '/home/unitree/ros_ws/src/map/test_1'
+  data: '/home/unitree/ros_ws/src/map/test_1.data'
+  posegraph: '/home/unitree/ros_ws/src/map/test_1.posegraph'
+waypoints:
+  - id: 'POI_001'
+    name: 'wp_01'
+    frame_id: 'map'
+    position:
+      x: 2.780894
+      y: 3.171834
+      z: 0.000641
+    yaw: 0.641873
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.315455
+      w: 0.948940
+  - id: 'POI_002'
+    name: 'wp_02'
+    frame_id: 'map'
+    position:
+      x: 4.061498
+      y: 1.890769
+      z: 0.004547
+    yaw: -2.792814
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.984833
+      w: 0.173507

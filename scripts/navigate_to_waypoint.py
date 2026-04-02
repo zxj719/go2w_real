@@ -23,10 +23,10 @@ def _print_help():
         "\n"
         "Options:\n"
         "  --waypoint-file PATH       Waypoint YAML path, default: "
-        "/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml\n"
+        "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml\n"
         "  --action-name NAME         Nav2 action name, default: /navigate_to_pose\n"
         "  --server-timeout SEC       Wait timeout for Nav2 action server, default: 10.0\n"
-        "  --waypoint NAME_OR_INDEX   Send one waypoint directly without prompting\n"
+        "  --waypoint ID_NAME_OR_INDEX Send one waypoint directly without prompting\n"
         "  --list-only                Only print available waypoints and exit\n"
         "  -h, --help                 Show this help message\n"
     )
@@ -155,6 +155,7 @@ def _load_waypoints(path):
         waypoints.append(
             {
                 "index": idx,
+                "id": str(raw_wp.get("id", raw_wp.get("name", f"wp_{idx:02d}"))),
                 "name": str(raw_wp.get("name", f"wp_{idx:02d}")),
                 "frame_id": str(raw_wp.get("frame_id", "map")),
                 "position": {
@@ -178,7 +179,8 @@ def _print_waypoints(waypoints):
 
     for wp in waypoints:
         print(
-            f"  {wp['index']:>2}. {wp['name']:<16} "
+            f"  {wp['index']:>2}. id={wp['id']:<12} "
+            f"name={wp['name']:<16} "
             f"frame={wp['frame_id']:<6} "
             f"x={wp['position']['x']:.3f} "
             f"y={wp['position']['y']:.3f} "
@@ -199,6 +201,10 @@ def _resolve_waypoint(selector, waypoints):
                 return wp
 
     lowered = text.lower()
+    for wp in waypoints:
+        if wp["id"].lower() == lowered:
+            return wp
+
     for wp in waypoints:
         if wp["name"].lower() == lowered:
             return wp
@@ -363,6 +369,7 @@ def _prompt_for_waypoint(waypoints):
         try:
             raw = input(
                 "\n[waypoint_nav] choose waypoint by index or name "
+                "(or id) "
                 "('q' to quit): "
             ).strip()
         except EOFError:

@@ -1,0 +1,96 @@
+map:
+  prefix: '/home/unitree/maps/go2w_map'
+  yaml: '/home/unitree/maps/go2w_map.yaml'
+  image: '/home/unitree/maps/go2w_map.pgm'
+waypoints:
+  - id: 'POI_001'
+    name: 'wp_01'
+    frame_id: 'map'
+    position:
+      x: 3.691877
+      y: 0.929044
+      z: 0.056122
+    yaw: 3.033608
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.998543
+      w: 0.053966
+  - id: 'POI_002'
+    name: 'wp_02'
+    frame_id: 'map'
+    position:
+      x: 5.046834
+      y: 6.594689
+      z: 0.052306
+    yaw: 2.903470
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.992921
+      w: 0.118780
+  - id: 'POI_003'
+    name: 'wp_03'
+    frame_id: 'map'
+    position:
+      x: 4.133379
+      y: 12.564939
+      z: 0.203339
+    yaw: -0.181708
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.090729
+      w: 0.995876
+  - id: 'POI_004'
+    name: 'wp_04'
+    frame_id: 'map'
+    position:
+      x: 7.589281
+      y: 24.459743
+      z: 0.036469
+    yaw: -1.820946
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.789794
+      w: 0.613372
+  - id: 'POI_005'
+    name: 'wp_05'
+    frame_id: 'map'
+    position:
+      x: 3.417840
+      y: 17.453836
+      z: 0.048370
+    yaw: 2.885428
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.991809
+      w: 0.127732
+  - id: 'POI_006'
+    name: 'wp_06'
+    frame_id: 'map'
+    position:
+      x: 3.311270
+      y: 17.529989
+      z: 0.048370
+    yaw: 2.883727
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.991700
+      w: 0.128576
+  - id: 'POI_007'
+    name: 'wp_07'
+    frame_id: 'map'
+    position:
+      x: -3.866957
+      y: 7.021132
+      z: -0.005280
+    yaw: 0.558052
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.275420
+      w: 0.961324

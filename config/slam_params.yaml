@@ -16,7 +16,8 @@ slam_toolbox:
     base_frame: base
     scan_topic: /scan
     use_map_saver: true
-    mode: mapping
+    mode: localization
+    #localization mapping
     # Auto-load the serialized pose graph stored under /home/unitree/ros_ws/src/map.
     # slam_toolbox expects the shared file prefix, not the .posegraph suffix.
     map_file_name: /home/unitree/ros_ws/src/map/test_1

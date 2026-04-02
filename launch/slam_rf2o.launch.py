@@ -258,7 +258,8 @@ def generate_launch_description():
 
     slam_toolbox = Node(
         package="slam_toolbox",
-        executable="async_slam_toolbox_node",
+        executable="localization_slam_toolbox_node",
+        # async_slam_toolbox_node  localization_slam_toolbox_node
         name="slam_toolbox",
         output="screen",
         arguments=["--ros-args", "--log-level", "warn"],
