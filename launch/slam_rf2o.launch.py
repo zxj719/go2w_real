@@ -42,6 +42,7 @@ def generate_launch_description():
     cloud_topic = LaunchConfiguration("cloud_topic")
     lidar_yaw_offset = LaunchConfiguration("lidar_yaw_offset")
     rviz_software_rendering = LaunchConfiguration("rviz_software_rendering")
+    slam_map_file = LaunchConfiguration("slam_map_file")
 
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
     slam_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
@@ -52,6 +53,12 @@ def generate_launch_description():
         source_file=nav2_params_file,
         root_key="",
         param_rewrites={"autostart": "true"},
+        convert_types=True,
+    )
+    configured_slam_params = RewrittenYaml(
+        source_file=slam_params_file,
+        root_key="",
+        param_rewrites={"map_file_name": slam_map_file},
         convert_types=True,
     )
 
@@ -82,6 +89,13 @@ def generate_launch_description():
         "rviz_software_rendering",
         default_value="false",
         description="Force RViz to use software OpenGL rendering if hardware GL is unstable",
+    )
+    declare_slam_map_file = DeclareLaunchArgument(
+        "slam_map_file",
+        default_value="/home/unitree/ros_ws/src/map/test_1",
+        description=(
+            "Serialized slam_toolbox map prefix without .data/.posegraph suffix"
+        ),
     )
 
     stdout_linebuf = SetEnvironmentVariable(
@@ -264,7 +278,7 @@ def generate_launch_description():
         output="screen",
         arguments=["--ros-args", "--log-level", "warn"],
         parameters=[
-            slam_params_file,
+            configured_slam_params,
             {"use_sim_time": False},
         ],
         remappings=remappings,
@@ -389,6 +403,7 @@ def generate_launch_description():
             declare_cloud_topic,
             declare_lidar_yaw_offset,
             declare_rviz_software_rendering,
+            declare_slam_map_file,
             rviz_software_gl,
             rviz_gl_version,
             robot_state_publisher,

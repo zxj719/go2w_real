@@ -15,6 +15,7 @@ install(PROGRAMS
   scripts/profile_nav_stack.py
   scripts/pointcloud_relay.py
   scripts/save_map_and_waypoints.py
+  scripts/start_navigation_headless.sh
   scripts/wait_for_transform.py
   DESTINATION lib/${PROJECT_NAME}
 )

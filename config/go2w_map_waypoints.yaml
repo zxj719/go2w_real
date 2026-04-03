@@ -1,7 +1,7 @@
 map:
-  prefix: '/home/unitree/maps/go2w_map'
-  yaml: '/home/unitree/maps/go2w_map.yaml'
-  image: '/home/unitree/maps/go2w_map.pgm'
+  serialized_prefix: '/home/unitree/ros_ws/src/map/zt_0'
+  data: '/home/unitree/ros_ws/src/map/zt_0.data'
+  posegraph: '/home/unitree/ros_ws/src/map/zt_0.posegraph'
 waypoints:
   - id: 'POI_001'
     name: 'wp_01'
