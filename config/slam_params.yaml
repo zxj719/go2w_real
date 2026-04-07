@@ -18,9 +18,9 @@ slam_toolbox:
     use_map_saver: true
     mode: localization
     #localization mapping
-    # Auto-load the serialized pose graph stored under /home/unitree/ros_ws/src/map.
-    # slam_toolbox expects the shared file prefix, not the .posegraph suffix.
-    map_file_name: /home/unitree/ros_ws/src/map/test_1
+    # Injected by slam_rf2o.launch.py through the slam_map_file launch argument.
+    # slam_toolbox expects the shared file prefix, not the .data/.posegraph suffix.
+    map_file_name: ""
     map_start_at_dock: true
 
     debug_logging: false

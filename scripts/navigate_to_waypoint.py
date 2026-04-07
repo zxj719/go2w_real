@@ -10,8 +10,16 @@ import sys
 import time
 
 
-DEFAULT_WAYPOINT_FILE = (
-    "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml"
+def _get_env_text(name, default):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return os.path.expanduser(value)
+
+
+DEFAULT_WAYPOINT_FILE = _get_env_text(
+    "GO2W_WAYPOINT_FILE",
+    "/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml",
 )
 DEFAULT_ACTION_NAME = "/navigate_to_pose"
 DEFAULT_SERVER_TIMEOUT = 10.0
@@ -19,16 +27,18 @@ DEFAULT_SERVER_TIMEOUT = 10.0
 
 def _print_help():
     print(
-        "Usage: ros2 run go2w_real navigate_to_waypoint.py [options] [--ros-args ...]\n"
+        f"Usage: ros2 run go2w_real navigate_to_waypoint.py [options] [--ros-args ...]\n"
         "\n"
         "Options:\n"
-        "  --waypoint-file PATH       Waypoint YAML path, default: "
-        "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml\n"
-        "  --action-name NAME         Nav2 action name, default: /navigate_to_pose\n"
-        "  --server-timeout SEC       Wait timeout for Nav2 action server, default: 10.0\n"
+        f"  --waypoint-file PATH       Waypoint YAML path, default: {DEFAULT_WAYPOINT_FILE}\n"
+        f"  --action-name NAME         Nav2 action name, default: {DEFAULT_ACTION_NAME}\n"
+        f"  --server-timeout SEC       Wait timeout for Nav2 action server, default: {DEFAULT_SERVER_TIMEOUT:.1f}\n"
         "  --waypoint ID_NAME_OR_INDEX Send one waypoint directly without prompting\n"
         "  --list-only                Only print available waypoints and exit\n"
         "  -h, --help                 Show this help message\n"
+        "\n"
+        "Environment overrides:\n"
+        "  GO2W_WAYPOINT_FILE\n"
     )
 
 
