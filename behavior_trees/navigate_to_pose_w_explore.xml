@@ -1,0 +1,29 @@
+<!--
+  GO2W exploration NavigateToPose tree (Foxy-compatible):
+  - Fail fast when global planning cannot produce a path
+  - Replan at 3 Hz when goal is updated
+  - Standard Nav2 Foxy recovery actions
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <GoalUpdatedController>
+          <RateController hz="3.0">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </RateController>
+        </GoalUpdatedController>
+        <FollowPath path="{path}" controller_id="FollowPath"/>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <SequenceStar name="RecoveryActions">
+          <ClearEntireCostmap name="ClearLocalCostmap" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap" service_name="global_costmap/clear_entirely_global_costmap"/>
+          <Spin spin_dist="1.57"/>
+          <Wait wait_duration="2"/>
+        </SequenceStar>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

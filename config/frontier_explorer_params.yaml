@@ -1,0 +1,56 @@
+# =============================================================================
+# Frontier Explorer Parameters for GO2W Real Robot
+# =============================================================================
+# BFS frontier-based autonomous explorer.
+# Searches outward from robot position and selects the nearest frontier.
+# The final navigation target is snapped onto the nearest free cell around
+# the frontier before sending NavigateToPose.
+#
+# Control:  publish Bool to 'explore/resume' to stop (false) / resume (true)
+# =============================================================================
+
+frontier_explorer:
+  ros__parameters:
+    # How often the planner runs (Hz).
+    planner_frequency: 0.2
+
+    # TF frames — match go2w_real slam_rf2o stack
+    robot_base_frame: base
+    odom_frame: odom
+    odom_topic: /odom
+    global_frame: map
+    map_topic: /map
+
+    # TF lookup tolerance (seconds)
+    transform_tolerance: 2.0
+
+    # Minimum number of frontier cells in a cluster to be considered valid.
+    min_frontier_size: 35
+
+    # Only refresh frontier candidates near the robot. Set <= 0 to disable.
+    frontier_update_radius: 0.0
+
+    # Weighted frontier evaluation
+    frontier_distance_weight: 1.0
+    frontier_size_weight: 0.0
+
+    # If no movement is detected within this many seconds, cancel and blacklist.
+    progress_timeout: 30.0
+
+    # Blacklisted frontier expiry time (seconds).
+    blacklist_timeout: 40.0
+
+    # Radius around a blacklisted point (m).
+    blacklist_radius: 0.5
+
+    # Navigate back to starting pose after all frontiers are exhausted.
+    return_to_init: false
+
+    # Publish MarkerArray of frontier targets to /explore/frontiers
+    visualize: true
+
+    # Search radius for nearest free goal cell around frontier centroid.
+    direct_frontier_goal_search_radius: 2.0
+
+    # Minimum distance change before preempting current goal.
+    goal_update_min_distance: 0.4

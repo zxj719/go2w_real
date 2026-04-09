@@ -90,8 +90,11 @@ controller_server:
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: True
       stateful: True
-      critics: ["RotateToGoal", "Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      ObstacleFootprint.scale: 8.0
+      # BaseObstacle evaluates trajectory cost against the costmap directly
+      # (same as g1_nav). ObstacleFootprint is heavier and less useful when
+      # the costmap inflation already encodes the safety buffer.
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
       PathAlign.scale: 12.0
       PathAlign.forward_point_distance: 0.2
       GoalAlign.scale: 8.0
@@ -102,6 +105,46 @@ controller_server:
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
 
+# -----------------------------------------------------------------------------
+# local_costmap: rolling window in odom frame for real-time obstacle avoidance.
+#
+# Layer strategy (same philosophy as g1_nav):
+#   1. static_layer  — subscribes to /map (live SLAM Toolbox output) so the
+#      controller sees ALL mapped obstacles, not just those in the current
+#      /scan FOV.  This prevents driving into obstacles behind or beside the
+#      robot that have already been mapped.
+#   2. obstacle_layer — subscribes to /scan for dynamic obstacles that SLAM
+#      hasn't integrated yet (people, doors being opened, etc.).
+#   3. inflation_layer — safety buffer around all obstacles.
+#
+# NOTE on VoxelLayer: GO2W's 3D lidar is converted to 2D /scan via
+# pointcloud_to_laserscan (height range [-0.2, 0.4] m). ObstacleLayer with
+# LaserScan is sufficient. If you later want full 3D obstacle detection
+# (e.g., table legs at heights outside the current slice), replace
+# obstacle_layer with VoxelLayer and feed the raw PointCloud2:
+#
+#   voxel_layer:
+#     plugin: "nav2_costmap_2d::VoxelLayer"
+#     enabled: True
+#     publish_voxel_map: True
+#     origin_z: 0.0
+#     z_resolution: 0.1
+#     z_voxels: 8
+#     max_obstacle_height: 1.0
+#     mark_threshold: 0
+#     observation_sources: pointcloud
+#     pointcloud:
+#       topic: /cloud_relayed
+#       max_obstacle_height: 1.0
+#       min_obstacle_height: 0.05
+#       clearing: True
+#       marking: True
+#       data_type: "PointCloud2"
+#       raytrace_max_range: 5.0
+#       raytrace_min_range: 0.10
+#       obstacle_max_range: 5.0
+#       obstacle_min_range: 0.10
+# -----------------------------------------------------------------------------
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -113,11 +156,17 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      # Trimmed standing GO2W footprint so local turning is less conservative in tight spaces.
       footprint: "[[-0.29, -0.19], [0.22, -0.19], [0.34, -0.10], [0.34, 0.10], [0.22, 0.19], [-0.29, 0.19]]"
       footprint_padding: 0.01
       transform_tolerance: 1.0
-      plugins: ["obstacle_layer", "inflation_layer"]
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: True
+        map_subscribe_transient_local: True
+        # Subscribes to /map from SLAM Toolbox so the controller always
+        # sees mapped obstacles even outside current scan FOV.
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -129,16 +178,26 @@ local_costmap:
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.05
+          # GO2W 3D lidar has 20 m range; local costmap only needs ~3 m
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.10
           obstacle_max_range: 3.0
           obstacle_min_range: 0.10
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 10.0
-        inflation_radius: 0.16
+        # Must be >= robot inscribed radius to avoid "robot in obstacle" warnings.
+        # GO2W half-width ~0.19 m, keep some margin.
+        inflation_radius: 0.22
       always_send_full_costmap: True
 
+# -----------------------------------------------------------------------------
+# global_costmap: full map frame for global planning.
+#   static_layer  — SLAM map for known structure
+#   obstacle_layer — /scan for dynamic obstacles so planner re-routes around
+#                    objects not yet in the SLAM map
+#   inflation_layer — safety buffer
+# -----------------------------------------------------------------------------
 global_costmap:
   global_costmap:
     ros__parameters:
@@ -147,13 +206,14 @@ global_costmap:
       global_frame: map
       robot_base_frame: base
       footprint: "[[-0.29, -0.19], [0.22, -0.19], [0.34, -0.10], [0.34, 0.10], [0.22, 0.19], [-0.29, 0.19]]"
-      footprint_padding: 0.01
+      footprint_padding: 0.05
       resolution: 0.05
       transform_tolerance: 1.0
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: True
         map_subscribe_transient_local: True
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -166,14 +226,16 @@ global_costmap:
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.05
-          obstacle_max_range: 3.0
+          # Longer range for global planning — 3D lidar supports up to 20 m,
+          # but practical indoor range with scan filter is ~8 m.
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.10
+          obstacle_max_range: 6.0
           obstacle_min_range: 0.10
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.20
+        inflation_radius: 0.25
       always_send_full_costmap: True
 
 planner_server:
@@ -184,7 +246,9 @@ planner_server:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.3
       use_astar: false
-      allow_unknown: true
+      # Frontier explorer already snaps goals to free cells, so the planner
+      # should not route through unknown space.
+      allow_unknown: false
 
 recoveries_server:
   ros__parameters:

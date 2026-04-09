@@ -1,7 +1,50 @@
 cmake_minimum_required(VERSION 3.8)
 project(go2w_real)
 
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
 find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(tf2_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+
+# --- Frontier Explorer C++ node ---
+add_executable(frontier_explorer_cpp
+  src/frontier_explorer.cpp
+  src/frontier_search.cpp
+)
+target_include_directories(frontier_explorer_cpp PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(frontier_explorer_cpp PUBLIC cxx_std_17)
+ament_target_dependencies(frontier_explorer_cpp
+  rclcpp
+  rclcpp_action
+  nav_msgs
+  nav2_msgs
+  geometry_msgs
+  std_msgs
+  builtin_interfaces
+  tf2_msgs
+  visualization_msgs
+)
+
+install(TARGETS frontier_explorer_cpp
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+  DESTINATION include
+)
 
 install(DIRECTORY config launch urdf meshes rviz behavior_trees
   DESTINATION share/${PROJECT_NAME}
