@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstdint>
 #include <cmath>
-#include <optional>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -18,45 +18,8 @@ struct Frontier
   double cost{0.0};
   double centroid_x{0.0};
   double centroid_y{0.0};
+  std::vector<std::pair<int, int>> cells;
 };
-
-inline std::pair<double, double> cell_world(
-  int x, int y, double resolution, double origin_x, double origin_y)
-{
-  return {
-    static_cast<double>(x) * resolution + origin_x,
-    static_cast<double>(y) * resolution + origin_y};
-}
-
-inline std::pair<double, double> cell_center_world(
-  int x, int y, double resolution, double origin_x, double origin_y)
-{
-  return {
-    (static_cast<double>(x) + 0.5) * resolution + origin_x,
-    (static_cast<double>(y) + 0.5) * resolution + origin_y};
-}
-
-inline std::optional<std::pair<int, int>> world_to_cell(
-  double world_x,
-  double world_y,
-  double resolution,
-  double origin_x,
-  double origin_y,
-  int width,
-  int height)
-{
-  if (resolution <= 0.0 || width <= 0 || height <= 0) {
-    return std::nullopt;
-  }
-
-  const int cell_x = static_cast<int>(std::floor((world_x - origin_x) / resolution));
-  const int cell_y = static_cast<int>(std::floor((world_y - origin_y) / resolution));
-  if (cell_x < 0 || cell_x >= width || cell_y < 0 || cell_y >= height) {
-    return std::nullopt;
-  }
-
-  return std::make_pair(cell_x, cell_y);
-}
 
 struct GridMapView
 {
@@ -87,19 +50,97 @@ struct GridMapView
     return (*cells)[static_cast<size_t>(index(x, y))];
   }
 
+  bool is_unknown_value(int8_t cell_value) const
+  {
+    return cell_value < 0;
+  }
+
+  bool is_search_free_value(int8_t cell_value) const
+  {
+    return cell_value >= 0 && cell_value <= 50;
+  }
+
+  bool is_search_free_value(int8_t cell_value, int threshold) const
+  {
+    return cell_value >= 0 && cell_value <= threshold;
+  }
+
+  bool is_goal_free_value(int8_t cell_value) const
+  {
+    return cell_value == 0;
+  }
+
+  bool is_obstacle_value(int8_t cell_value) const
+  {
+    return cell_value > 50;
+  }
+
+  bool is_obstacle_value(int8_t cell_value, int threshold) const
+  {
+    return cell_value > threshold;
+  }
+
+  bool is_unknown(int x, int y) const
+  {
+    return is_unknown_value(value(x, y));
+  }
+
+  bool is_search_free(int x, int y) const
+  {
+    return is_search_free_value(value(x, y));
+  }
+
+  bool is_search_free(int x, int y, int threshold) const
+  {
+    return is_search_free_value(value(x, y), threshold);
+  }
+
+  bool is_goal_free(int x, int y) const
+  {
+    return is_goal_free_value(value(x, y));
+  }
+
   bool is_obstacle(int idx) const
   {
-    return (*cells)[static_cast<size_t>(idx)] > 50;
+    return is_obstacle_value((*cells)[static_cast<size_t>(idx)]);
+  }
+
+  bool is_obstacle(int x, int y) const
+  {
+    return is_obstacle_value(value(x, y));
+  }
+
+  bool is_obstacle(int x, int y, int threshold) const
+  {
+    return is_obstacle_value(value(x, y), threshold);
+  }
+
+  std::optional<std::pair<int, int>> world_to_cell(double wx, double wy) const
+  {
+    if (!valid()) {
+      return std::nullopt;
+    }
+
+    const int x = static_cast<int>(std::floor((wx - origin_x) / resolution));
+    const int y = static_cast<int>(std::floor((wy - origin_y) / resolution));
+    if (!in_bounds(x, y)) {
+      return std::nullopt;
+    }
+    return std::make_pair(x, y);
   }
 
   std::pair<double, double> cell_world(int x, int y) const
   {
-    return go2w_real::cell_world(x, y, resolution, origin_x, origin_y);
+    return {
+      static_cast<double>(x) * resolution + origin_x,
+      static_cast<double>(y) * resolution + origin_y};
   }
 
   std::pair<double, double> cell_center_world(int x, int y) const
   {
-    return go2w_real::cell_center_world(x, y, resolution, origin_x, origin_y);
+    return {
+      (static_cast<double>(x) + 0.5) * resolution + origin_x,
+      (static_cast<double>(y) + 0.5) * resolution + origin_y};
   }
 };
 

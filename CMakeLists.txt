@@ -16,6 +16,16 @@ find_package(builtin_interfaces REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
+# --- Frontier Goal Selector library ---
+add_library(frontier_goal_selector_lib
+  src/frontier_goal_selector.cpp
+)
+target_include_directories(frontier_goal_selector_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(frontier_goal_selector_lib PUBLIC cxx_std_17)
+
 # --- Frontier Explorer C++ node ---
 add_executable(frontier_explorer_cpp
   src/frontier_explorer.cpp
@@ -26,6 +36,7 @@ target_include_directories(frontier_explorer_cpp PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(frontier_explorer_cpp PUBLIC cxx_std_17)
+target_link_libraries(frontier_explorer_cpp frontier_goal_selector_lib)
 ament_target_dependencies(frontier_explorer_cpp
   rclcpp
   rclcpp_action

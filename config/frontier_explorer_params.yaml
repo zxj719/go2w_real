@@ -1,7 +1,7 @@
 # =============================================================================
 # Frontier Explorer Parameters for GO2W Real Robot
 # =============================================================================
-# BFS frontier-based autonomous explorer.
+# BFS frontier-based autonomous explorer inspired by m-explore.
 # Searches outward from robot position and selects the nearest frontier.
 # The final navigation target is snapped onto the nearest free cell around
 # the frontier before sending NavigateToPose.
@@ -12,45 +12,75 @@
 frontier_explorer:
   ros__parameters:
     # How often the planner runs (Hz).
-    planner_frequency: 0.2
+    # The node also replans immediately on goal completion, so this mainly
+    # controls how quickly it reacts when idle.
+    planner_frequency: 1.0
 
-    # TF frames — match go2w_real slam_rf2o stack
+    # TF frames — match go2w_real SLAM Toolbox stack
     robot_base_frame: base
     odom_frame: odom
     odom_topic: /odom
     global_frame: map
     map_topic: /map
+    global_costmap_topic: /global_costmap/costmap
 
     # TF lookup tolerance (seconds)
     transform_tolerance: 2.0
 
-    # Minimum number of frontier cells in a cluster to be considered valid.
-    min_frontier_size: 35
+    # Minimum number of frontier cells in a cluster to be considered
+    # a valid frontier. Filters noise / tiny gaps.
+    min_frontier_size: 15
 
-    # Only refresh frontier candidates near the robot. Set <= 0 to disable.
+    # Probability-map threshold used only for frontier search and robot-start
+    # snapping. Known cells with values <= this threshold are treated as
+    # traversable search-free cells. Final Nav2 goals still stay on pure 0.
+    search_free_threshold: 0
+
+    # Additional frontier-search filter applied in the latest global costmap.
+    # Cells above this cost are excluded from frontier clustering so sparse
+    # inflated obstacle shards do not bridge or skew frontier centroids.
+    costmap_search_threshold: 20
+
+    # Only refresh frontier candidates that are near the robot. This keeps
+    # frontier updates local instead of rescoring distant map changes every cycle.
+    # Set <= 0 to disable the distance gate.
     frontier_update_radius: 0.0
 
-    # Weighted frontier evaluation
+    # Weighted frontier evaluation: score = -distance * distance_weight + size * size_weight
+    # Higher score wins.
     frontier_distance_weight: 1.0
-    frontier_size_weight: 0.0
+    frontier_size_weight: 0.2
 
-    # If no movement is detected within this many seconds, cancel and blacklist.
+    # If no movement is detected within this many seconds during navigation,
+    # cancel the current goal and blacklist that frontier.
     progress_timeout: 30.0
 
-    # Blacklisted frontier expiry time (seconds).
-    blacklist_timeout: 40.0
-
-    # Radius around a blacklisted point (m).
+    # Radius around a blacklisted point (m). Any frontier centroid
+    # within this radius is also considered blacklisted.
+    # Blacklist entries are retained until no frontier remains, then the
+    # blacklist is cleared once to allow a full retry.
     blacklist_radius: 0.5
 
-    # Navigate back to starting pose after all frontiers are exhausted.
+    # When true, the robot navigates back to its starting pose after
+    # all frontiers are exhausted.
     return_to_init: false
 
-    # Publish MarkerArray of frontier targets to /explore/frontiers
+    # Publish MarkerArray of snapped frontier navigation targets to /frontier_markers
     visualize: true
 
-    # Search radius for nearest free goal cell around frontier centroid.
-    direct_frontier_goal_search_radius: 2.0
+    # Snap invalid frontier anchors onto an admissible goal candidate
+    # found on a ring of this radius. The same radius is reused for
+    # frontier non-maximum suppression.
+    frontier_snap_radius: 0.5
 
-    # Minimum distance change before preempting current goal.
+    # If the primary snap ring cannot produce a goal, try a larger ring
+    # once before blacklisting that frontier.
+    frontier_fallback_snap_radius: 1.0
+
+    # Candidate goal centers must keep this much extra zero-cost clearance
+    # in the global costmap, matching the circular robot radius.
+    goal_clearance_radius: 0.1
+
+    # Minimum distance change (m) before a new frontier / navigation goal
+    # preempts the current NavigateToPose task.
     goal_update_min_distance: 0.4
