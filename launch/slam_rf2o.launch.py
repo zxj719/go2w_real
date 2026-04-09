@@ -26,7 +26,12 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import Command, FindExecutable, LaunchConfiguration
+from launch.substitutions import (
+    Command,
+    EnvironmentVariable,
+    FindExecutable,
+    LaunchConfiguration,
+)
 
 from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
@@ -66,7 +71,10 @@ def generate_launch_description():
 
     declare_net_iface = DeclareLaunchArgument(
         "network_interface",
-        default_value="eth0",
+        default_value=EnvironmentVariable(
+            "GO2W_NETWORK_INTERFACE",
+            default_value="eth0",
+        ),
         description="Network interface connected to GO2W",
     )
 
@@ -92,7 +100,10 @@ def generate_launch_description():
     )
     declare_slam_map_file = DeclareLaunchArgument(
         "slam_map_file",
-        default_value="/home/unitree/ros_ws/src/map/test_1",
+        default_value=EnvironmentVariable(
+            "GO2W_SLAM_MAP_FILE",
+            default_value="/home/unitree/ros_ws/src/map/zt_0",
+        ),
         description=(
             "Serialized slam_toolbox map prefix without .data/.posegraph suffix"
         ),

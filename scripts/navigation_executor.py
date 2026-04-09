@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 from enum import Enum
+import fcntl
 import json
 import math
 import os
@@ -22,9 +23,20 @@ import threading
 import time
 
 
-DEFAULT_SERVER_URI = "ws://192.168.0.131:8100/ws/navigation/executor"
-DEFAULT_WAYPOINT_FILE = (
-    "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml"
+def _get_env_text(name, default):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return os.path.expanduser(value)
+
+
+DEFAULT_SERVER_URI = _get_env_text(
+    "GO2W_SERVER_URI",
+    "ws://192.168.0.131:8100/ws/navigation/executor",
+)
+DEFAULT_WAYPOINT_FILE = _get_env_text(
+    "GO2W_WAYPOINT_FILE",
+    "/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml",
 )
 DEFAULT_ACTION_NAME = "/navigate_to_pose"
 DEFAULT_SERVER_TIMEOUT = 10.0
@@ -32,6 +44,8 @@ DEFAULT_HEARTBEAT_INTERVAL = 30.0
 DEFAULT_RECONNECT_DELAY = 3.0
 DEFAULT_ABORT_WAIT_TIMEOUT = 5.0
 DEFAULT_PROGRESS_INTERVAL = 1.0
+DEFAULT_NAV_EVENT_TIMEOUT = 15.0
+DEFAULT_INSTANCE_LOCK_FILE = "/tmp/go2w_navigation_executor.lock"
 
 
 class ExecutorState(str, Enum):
@@ -55,23 +69,28 @@ class NavigationTask:
     abort_requested: bool = False
     last_remaining_distance: float = 0.0
     last_progress_sent_at: float = 0.0
+    accepted_at: float = 0.0
+    last_nav_event_at: float = 0.0
 
 
 def _print_help():
     print(
-        "Usage: ros2 run go2w_real navigation_executor.py [options] [--ros-args ...]\n"
+        f"Usage: ros2 run go2w_real navigation_executor.py [options] [--ros-args ...]\n"
         "\n"
         "Options:\n"
-        "  --server-uri URI          WebSocket URI, default: "
-        "ws://192.168.0.131:8100/ws/navigation/executor\n"
-        "  --waypoint-file PATH      Waypoint YAML path, default: "
-        "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml\n"
-        "  --action-name NAME        Nav2 action name, default: /navigate_to_pose\n"
-        "  --server-timeout SEC      Nav2 action server wait timeout, default: 10.0\n"
-        "  --heartbeat-interval SEC  Heartbeat interval, default: 30.0\n"
-        "  --reconnect-delay SEC     Reconnect delay after disconnect, default: 3.0\n"
+        f"  --server-uri URI          WebSocket URI, default: {DEFAULT_SERVER_URI}\n"
+        f"  --waypoint-file PATH      Waypoint YAML path, default: {DEFAULT_WAYPOINT_FILE}\n"
+        f"  --action-name NAME        Nav2 action name, default: {DEFAULT_ACTION_NAME}\n"
+        f"  --server-timeout SEC      Nav2 action server wait timeout, default: {DEFAULT_SERVER_TIMEOUT:.1f}\n"
+        f"  --heartbeat-interval SEC  Heartbeat interval, default: {DEFAULT_HEARTBEAT_INTERVAL:.1f}\n"
+        f"  --reconnect-delay SEC     Reconnect delay after disconnect, default: {DEFAULT_RECONNECT_DELAY:.1f}\n"
+        f"  --nav-event-timeout SEC   Max wait for Nav2 feedback/result after goal acceptance, default: {DEFAULT_NAV_EVENT_TIMEOUT:.1f}\n"
         "  --list-pois               Print the loaded POI table and exit\n"
         "  -h, --help                Show this help message\n"
+        "\n"
+        "Environment overrides:\n"
+        "  GO2W_SERVER_URI\n"
+        "  GO2W_WAYPOINT_FILE\n"
     )
 
 
@@ -83,6 +102,7 @@ def _parse_cli_args(raw_args):
         "server_timeout": DEFAULT_SERVER_TIMEOUT,
         "heartbeat_interval": DEFAULT_HEARTBEAT_INTERVAL,
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
+        "nav_event_timeout": DEFAULT_NAV_EVENT_TIMEOUT,
         "list_pois": False,
     }
     ros_args = []
@@ -140,6 +160,14 @@ def _parse_cli_args(raw_args):
             continue
         if arg.startswith("--reconnect-delay="):
             config["reconnect_delay"] = float(arg.split("=", 1)[1])
+            i += 1
+            continue
+        if arg == "--nav-event-timeout" and i + 1 < len(raw_args):
+            config["nav_event_timeout"] = float(raw_args[i + 1])
+            i += 2
+            continue
+        if arg.startswith("--nav-event-timeout="):
+            config["nav_event_timeout"] = float(arg.split("=", 1)[1])
             i += 1
             continue
         if arg == "--list-pois":
@@ -272,6 +300,28 @@ def _print_waypoints(waypoints):
             f"yaw={math.degrees(wp['yaw']):.1f} deg",
             flush=True,
         )
+
+
+def _acquire_instance_lock(lock_file_path):
+    lock_path = os.path.expanduser(lock_file_path)
+    lock_handle = open(lock_path, "a+", encoding="utf-8")
+
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        lock_handle.seek(0)
+        owner_pid = lock_handle.read().strip() or "unknown"
+        lock_handle.close()
+        raise RuntimeError(
+            "another navigation_executor instance is already running "
+            f"(pid={owner_pid}, lock={lock_path})"
+        ) from exc
+
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.write(f"{os.getpid()}\n")
+    lock_handle.flush()
+    return lock_handle
 
 
 class Nav2ActionBridge:
@@ -792,6 +842,12 @@ class NavigationExecutor:
             )
             return
 
+        print(
+            "[navigation_executor] received navigate_to: "
+            f"request_id={request_id}, sub_id={sub_id}, target_id={target_id}",
+            flush=True,
+        )
+
         try:
             waypoints = _load_waypoints(self.config["waypoint_file"])
         except Exception as exc:
@@ -837,6 +893,10 @@ class NavigationExecutor:
             self._start_navigation(task, command_version),
             label=f"start_navigation:{request_id}",
         )
+        self._create_background_task(
+            self._watch_navigation_feedback(task, command_version),
+            label=f"watch_navigation:{request_id}",
+        )
 
     async def _start_navigation(self, task, command_version):
         if not self._is_latest_command(command_version):
@@ -861,6 +921,11 @@ class NavigationExecutor:
     async def _handle_abort_navigation(self, data):
         self._next_command_version()
         request_id = str(data.get("request_id", "")).strip()
+        print(
+            "[navigation_executor] received abort_navigation: "
+            f"request_id={request_id or 'unknown'}",
+            flush=True,
+        )
         await self._abort_current(
             expected_request_id=request_id or None,
             report_pause=True,
@@ -922,6 +987,9 @@ class NavigationExecutor:
 
         kind = event["kind"]
         if kind == "accepted":
+            now = time.monotonic()
+            task.accepted_at = now
+            task.last_nav_event_at = now
             if not task.abort_requested:
                 self._set_state(ExecutorState.NAVIGATING)
             return
@@ -931,13 +999,14 @@ class NavigationExecutor:
             return
 
         if kind == "progress":
+            now = time.monotonic()
             remaining_distance = float(event.get("remaining_distance", 0.0))
             task.last_remaining_distance = remaining_distance
+            task.last_nav_event_at = now
 
             if task.abort_requested:
                 return
 
-            now = time.monotonic()
             if now - task.last_progress_sent_at < DEFAULT_PROGRESS_INTERVAL:
                 return
 
@@ -983,6 +1052,60 @@ class NavigationExecutor:
             )
             self._complete_task(task, set_idle=False)
             self._set_state(ExecutorState.ERROR)
+            return
+
+    async def _watch_navigation_feedback(self, task, command_version):
+        timeout = float(self.config["nav_event_timeout"])
+        if timeout <= 0.0:
+            return
+
+        while True:
+            await asyncio.sleep(0.5)
+
+            if not self._is_latest_command(command_version):
+                return
+            if self.current_task is not task:
+                return
+            if task.done_future.done() or task.abort_requested:
+                return
+            if task.accepted_at <= 0.0:
+                continue
+
+            idle_for = time.monotonic() - task.last_nav_event_at
+            if idle_for < timeout:
+                continue
+
+            error_message = (
+                "Nav2 accepted the goal but produced no feedback/result for "
+                f"{timeout:.1f}s; planner may be stuck or the target may be "
+                "unreachable"
+            )
+            print(
+                "[navigation_executor] navigation feedback watchdog fired: "
+                f"request_id={task.request_id}, target_id={task.target_id}, "
+                f"idle_for={idle_for:.1f}s",
+                flush=True,
+            )
+            await self._send_error_event(
+                task.request_id,
+                task.sub_id,
+                error_message,
+            )
+
+            task.abort_requested = True
+            try:
+                await self._run_blocking(self._bridge.cancel_current)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                print(
+                    f"[navigation_executor] watchdog cancel_current failed: {exc}",
+                    flush=True,
+                )
+
+            if self.current_task is task:
+                self._complete_task(task, set_idle=False)
+                self._set_state(ExecutorState.ERROR)
             return
 
     async def _send_progress_event(self, request_id, sub_id, remaining_distance, status):
@@ -1089,11 +1212,14 @@ def main(args=None):
         _print_waypoints(waypoints)
         return
 
+    instance_lock = _acquire_instance_lock(DEFAULT_INSTANCE_LOCK_FILE)
     executor = NavigationExecutor(config, ros_args)
     try:
         asyncio.run(executor.run())
     except KeyboardInterrupt:
         pass
+    finally:
+        instance_lock.close()
 
 
 if __name__ == "__main__":
