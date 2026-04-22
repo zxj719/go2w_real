@@ -12,7 +12,7 @@ bt_navigator:
     # FollowPath goal handshakes on the real robot stack and causes
     # "send_goal failed" right after planning succeeds.
     default_server_timeout: 5000
-    default_bt_xml_filename: "/home/unitree/ros_ws/src/go2w_real/behavior_trees/navigate_w_replanning_and_recovery_fast.xml"
+    default_bt_xml_filename: "/opt/ros/foxy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_and_recovery.xml"
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_follow_path_action_bt_node
@@ -57,8 +57,8 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.50
-      yaw_goal_tolerance: 3.14
+      xy_goal_tolerance: 0.30
+      yaw_goal_tolerance: 1.0
 
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
@@ -66,12 +66,12 @@ controller_server:
       # GO2W is commanded as a diff-drive platform in this stack.
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.75
+      max_vel_x: 0.25
       max_vel_y: 0.0
-      max_vel_theta: 0.50
+      max_vel_theta: 0.45
       min_vel_theta: 0.05
       min_speed_xy: 0.0
-      max_speed_xy: 0.75
+      max_speed_xy: 0.25
       min_speed_theta: 0.05
       acc_lim_x: 1.2
       acc_lim_y: 0.0
@@ -82,24 +82,16 @@ controller_server:
       vx_samples: 15
       vy_samples: 1
       vtheta_samples: 20
-      # Give the controller a slightly longer lookahead so it starts turning
-      # away from newly observed obstacles earlier instead of reacting late.
-      sim_time: 1.6
+      sim_time: 1.2
       linear_granularity: 0.05
       angular_granularity: 0.025
-      # RF2O occasionally pauses for ~1 s while scan matching catches up on
-      # real hardware. Give the controller a little more TF age budget so it
-      # does not abort on brief map<-odom lag spikes.
-      transform_tolerance: 2.0
+      transform_tolerance: 1.0
       xy_goal_tolerance: 0.30
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: True
       stateful: True
-      # BaseObstacle evaluates trajectory cost against the costmap directly
-      # (same as g1_nav). ObstacleFootprint is heavier and less useful when
-      # the costmap inflation already encodes the safety buffer.
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
+      critics: ["RotateToGoal", "Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      ObstacleFootprint.scale: 8.0
       PathAlign.scale: 12.0
       PathAlign.forward_point_distance: 0.2
       GoalAlign.scale: 8.0
@@ -110,139 +102,78 @@ controller_server:
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
 
-# -----------------------------------------------------------------------------
-# local_costmap: rolling window in odom frame for real-time obstacle avoidance.
-#
-# Layer strategy (same philosophy as g1_nav):
-#   1. static_layer  — subscribes to /map (live SLAM Toolbox output) so the
-#      controller sees ALL mapped obstacles, not just those in the current
-#      /scan_raw FOV. This prevents driving into obstacles behind or beside the
-#      robot that have already been mapped.
-#   2. obstacle_layer — subscribes to /scan_raw for dynamic obstacles that SLAM
-#      hasn't integrated yet (people, doors being opened, etc.).
-#   3. inflation_layer — safety buffer around all obstacles.
-#
-# NOTE on VoxelLayer: GO2W's 3D lidar is converted to 2D /scan_raw via
-# pointcloud_to_laserscan (height range [-0.2, 0.4] m). ObstacleLayer with
-# LaserScan is sufficient. If you later want full 3D obstacle detection
-# (e.g., table legs at heights outside the current slice), replace
-# obstacle_layer with VoxelLayer and feed the raw PointCloud2:
-#
-#   voxel_layer:
-#     plugin: "nav2_costmap_2d::VoxelLayer"
-#     enabled: True
-#     publish_voxel_map: True
-#     origin_z: 0.0
-#     z_resolution: 0.1
-#     z_voxels: 8
-#     max_obstacle_height: 1.0
-#     mark_threshold: 0
-#     observation_sources: pointcloud
-#     pointcloud:
-#       topic: /cloud_relayed
-#       max_obstacle_height: 1.0
-#       min_obstacle_height: 0.05
-#       clearing: True
-#       marking: True
-#       data_type: "PointCloud2"
-#       raytrace_max_range: 5.0
-#       raytrace_min_range: 0.10
-#       obstacle_max_range: 5.0
-#       obstacle_min_range: 0.10
-# -----------------------------------------------------------------------------
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 10.0
-      publish_frequency: 10.0
+      update_frequency: 5.0
+      publish_frequency: 5.0
       global_frame: odom
       robot_base_frame: base
       rolling_window: true
-      # A 3 m rolling window only gives the controller ~1.5 m of context in
-      # front of the robot. Expanding it helps the local planner see and route
-      # around newly appearing obstacles sooner.
-      width: 5
-      height: 5
+      width: 3
+      height: 3
       resolution: 0.05
+      # Trimmed standing GO2W footprint so local turning is less conservative in tight spaces.
       footprint: "[[-0.29, -0.19], [0.22, -0.19], [0.34, -0.10], [0.34, 0.10], [0.22, 0.19], [-0.29, 0.19]]"
       footprint_padding: 0.01
-      transform_tolerance: 2.0
-      track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        enabled: True
-        map_subscribe_transient_local: True
-        # Subscribes to /map from SLAM Toolbox so the controller always
-        # sees mapped obstacles even outside current scan FOV.
+      transform_tolerance: 1.0
+      plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        footprint_clearing_enabled: True
-        observation_sources: scan_raw
-        scan_raw:
-          topic: /scan_raw
+        observation_sources: scan
+        scan:
+          topic: /scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 4.5
+          raytrace_max_range: 3.0
           raytrace_min_range: 0.05
-          obstacle_max_range: 4.0
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.10
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        # Keep a wider buffer than the inscribed radius so newly observed
-        # obstacles are penalized early without over-blocking narrow turns.
-        inflation_radius: 0.30
+        cost_scaling_factor: 10.0
+        inflation_radius: 0.16
       always_send_full_costmap: True
 
-# -----------------------------------------------------------------------------
-# global_costmap: full map frame for global planning.
-#   static_layer  — SLAM map for known structure
-#   obstacle_layer — /scan_raw for dynamic obstacles so planner re-routes around
-#                    objects not yet in the SLAM map
-#   inflation_layer — safety buffer
-# -----------------------------------------------------------------------------
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 4.0
-      publish_frequency: 4.0
+      update_frequency: 2.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base
       footprint: "[[-0.29, -0.19], [0.22, -0.19], [0.34, -0.10], [0.34, 0.10], [0.22, 0.19], [-0.29, 0.19]]"
-      footprint_padding: 0.05
+      footprint_padding: 0.01
       resolution: 0.05
-      transform_tolerance: 2.0
+      transform_tolerance: 1.0
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        enabled: True
         map_subscribe_transient_local: True
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        footprint_clearing_enabled: True
-        observation_sources: scan_raw
-        scan_raw:
-          topic: /scan_raw
+        observation_sources: scan
+        scan:
+          topic: /scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 4.5
+          raytrace_max_range: 3.0
           raytrace_min_range: 0.05
-          obstacle_max_range: 4.0
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.10
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        inflation_radius: 0.20
       always_send_full_costmap: True
 
 planner_server:
@@ -251,29 +182,25 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
-      # Match the controller goal checker so transient replans near a wall do
-      # not fail on a stricter planner-only XY tolerance.
-      tolerance: 0.5
-      use_astar: true
-      # Frontier explorer already snaps goals to free cells, so the planner
-      # should not route through unknown space.
-      allow_unknown: false
+      tolerance: 0.3
+      use_astar: false
+      allow_unknown: true
 
 recoveries_server:
   ros__parameters:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    recovery_plugins: ["backup", "spin", "wait"]
-    backup:
-      plugin: "nav2_recoveries/BackUp"
+    recovery_plugins: ["spin", "backup", "wait"]
     spin:
       plugin: "nav2_recoveries/Spin"
+    backup:
+      plugin: "nav2_recoveries/BackUp"
     wait:
       plugin: "nav2_recoveries/Wait"
     global_frame: odom
     robot_base_frame: base
-    transform_tolerance: 2.0
+    transform_tolerance: 1.0
     simulate_ahead_time: 1.0
     max_rotational_vel: 0.45
     min_rotational_vel: 0.15

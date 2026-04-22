@@ -3,94 +3,237 @@ map:
   data: '/home/unitree/ros_ws/src/map/zt_0.data'
   posegraph: '/home/unitree/ros_ws/src/map/zt_0.posegraph'
 waypoints:
-  - id: 'POI_001'
+  - id: 'POI_013'
+    name: 'wp_00'
+    frame_id: 'map'
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.000000
+    yaw: 0.0
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.0
+      w: 0.0
+  - id: 'POI_013'
     name: 'wp_01'
     frame_id: 'map'
     position:
-      x: 3.691877
-      y: 0.929044
-      z: 0.056122
-    yaw: 3.033608
+      x: 3.491726
+      y: 0.961747
+      z: 0.000000
+    yaw: 3.009041
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.998543
-      w: 0.053966
-  - id: 'POI_002'
+      z: 0.997805
+      w: 0.066227
+  - id: 'POI_014'
     name: 'wp_02'
     frame_id: 'map'
     position:
-      x: 5.046834
-      y: 6.594689
-      z: 0.052306
-    yaw: 2.903470
+      x: 4.403884
+      y: 3.688439
+      z: 0.000000
+    yaw: 2.998332
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.992921
-      w: 0.118780
-  - id: 'POI_003'
+      z: 0.997436
+      w: 0.071569
+  - id: 'POI_015'
     name: 'wp_03'
     frame_id: 'map'
     position:
-      x: 4.133379
-      y: 12.564939
-      z: 0.203339
-    yaw: -0.181708
+      x: 6.792344
+      y: 10.960777
+      z: 0.000000
+    yaw: 2.883665
     orientation:
       x: 0.000000
       y: 0.000000
-      z: -0.090729
-      w: 0.995876
-  - id: 'POI_004'
+      z: 0.991696
+      w: 0.128607
+  - id: 'POI_016'
     name: 'wp_04'
     frame_id: 'map'
     position:
-      x: 7.589281
-      y: 24.459743
-      z: 0.036469
-    yaw: -1.820946
+      x: 3.550840
+      y: 12.423223
+      z: 0.000000
+    yaw: -0.362860
     orientation:
       x: 0.000000
       y: 0.000000
-      z: -0.789794
-      w: 0.613372
-  - id: 'POI_005'
+      z: -0.180436
+      w: 0.983587
+  - id: 'POI_017'
     name: 'wp_05'
     frame_id: 'map'
     position:
-      x: 3.417840
-      y: 17.453836
-      z: 0.048370
-    yaw: 2.885428
+      x: 5.618270
+      y: 18.105186
+      z: 0.000000
+    yaw: 1.251157
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.991809
-      w: 0.127732
-  - id: 'POI_006'
+      z: 0.585566
+      w: 0.810625
+  - id: 'POI_018'
     name: 'wp_06'
     frame_id: 'map'
     position:
-      x: 3.311270
-      y: 17.529989
-      z: 0.048370
-    yaw: 2.883727
+      x: 6.844685
+      y: 19.421215
+      z: 0.000000
+    yaw: 2.899125
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.991700
-      w: 0.128576
-  - id: 'POI_007'
+      z: 0.992660
+      w: 0.120937
+  - id: 'POI_019'
     name: 'wp_07'
     frame_id: 'map'
     position:
-      x: -3.866957
-      y: 7.021132
-      z: -0.005280
-    yaw: 0.558052
+      x: 8.238342
+      y: 24.996097
+      z: 0.000000
+    yaw: 2.904027
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.275420
-      w: 0.961324
+      z: 0.992954
+      w: 0.118504
+  - id: 'POI_020'
+    name: 'wp_08'
+    frame_id: 'map'
+    position:
+      x: 3.954953
+      y: 25.409558
+      z: 0.000000
+    yaw: -0.193051
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.096376
+      w: 0.995345
+  - id: 'POI_021'
+    name: 'wp_09'
+    frame_id: 'map'
+    position:
+      x: 2.119334
+      y: 27.307444
+      z: 0.000000
+    yaw: -0.313253
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.155987
+      w: 0.987759
+  - id: 'POI_022'
+    name: 'wp_10'
+    frame_id: 'map'
+    position:
+      x: -0.024720
+      y: 22.211578
+      z: 0.000000
+    yaw: -0.280723
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.139901
+      w: 0.990166
+  - id: 'POI_023'
+    name: 'wp_11'
+    frame_id: 'map'
+    position:
+      x: 2.989579
+      y: 19.966649
+      z: 0.000000
+    yaw: -2.676461
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.973078
+      w: 0.230475
+  - id: 'POI_024'
+    name: 'wp_12'
+    frame_id: 'map'
+    position:
+      x: -1.115042
+      y: 17.309956
+      z: 0.000000
+    yaw: 0.051609
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.025801
+      w: 0.999667
+  - id: 'POI_025'
+    name: 'wp_13'
+    frame_id: 'map'
+    position:
+      x: -2.220170
+      y: 14.459470
+      z: 0.000000
+    yaw: 0.149635
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.074748
+      w: 0.997202
+  - id: 'POI_026'
+    name: 'wp_14'
+    frame_id: 'map'
+    position:
+      x: -3.510732
+      y: 9.940794
+      z: 0.000000
+    yaw: -0.039859
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.019928
+      w: 0.999801
+  - id: 'POI_027'
+    name: 'wp_15'
+    frame_id: 'map'
+    position:
+      x: -2.827129
+      y: 5.735720
+      z: 0.000000
+    yaw: 1.822305
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.790211
+      w: 0.612835
+  - id: 'POI_028'
+    name: 'wp_16'
+    frame_id: 'map'
+    position:
+      x: 0.018045
+      y: 9.764402
+      z: 0.000000
+    yaw: 2.458550
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.942246
+      w: 0.334921
+  - id: 'POI_029'
+    name: 'wp_17'
+    frame_id: 'map'
+    position:
+      x: 6.792344
+      y: 10.960777
+      z: 0.000000
+    yaw: 2.883665
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.991696
+      w: 0.128607

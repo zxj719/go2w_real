@@ -38,10 +38,8 @@ for sdk_path in SDK_SEARCH_PATHS:
 
 
 DEFAULT_STATE_TOPICS = (
-    "rt/odommodestate",       # official odom state, high frequency
-    "rt/lf/odommodestate",    # official odom state, low frequency
-    "rt/lf/sportmodestate",   # GO2W fallback
-    "rt/sportmodestate",      # GO2 / older examples fallback
+    "rt/lf/sportmodestate",  # GO2W
+    "rt/sportmodestate",     # GO2 / older examples
 )
 NO_STATE_WARN_PERIOD = 5.0
 POSITION_USEFUL_NORM_EPS = 1e-3
@@ -148,7 +146,7 @@ def _sdk2_worker(
                 )
 
     print(
-        "[go2w_bridge] Subscribing odom/sport state topics: "
+        "[go2w_bridge] Subscribing SportModeState topics: "
         + ", ".join(DEFAULT_STATE_TOPICS),
         flush=True,
     )
@@ -254,6 +252,14 @@ def _vector_norm(vec):
     return math.sqrt(sum(component * component for component in vec))
 
 
+def apply_angular_deadband(angular_z: float, threshold: float) -> float:
+    if threshold <= 0.0:
+        return angular_z
+    if abs(angular_z) < threshold:
+        return 0.0
+    return angular_z
+
+
 def main(args=None):
     import rclpy
     from rclpy.node import Node
@@ -300,226 +306,266 @@ def main(args=None):
     sdk_proc.start()
     print(f"[go2w_bridge] SDK2 worker started (PID {sdk_proc.pid})", flush=True)
 
-    # Now safe to initialize ROS2 (creates its own CycloneDDS domain)
-    rclpy.init(args=ros_args)
+    # Allow launch supervisors that send SIGTERM to trigger the normal cleanup
+    # path below so the SDK worker does not get stranded as an orphan.
+    def _forward_sigterm_to_shutdown(signum, frame):
+        raise KeyboardInterrupt()
 
-    node = Node("go2w_bridge")
+    signal.signal(signal.SIGTERM, _forward_sigterm_to_shutdown)
 
-    # Parameters (for logging; net_iface already parsed above)
-    node.declare_parameter("network_interface", net_iface)
-    node.declare_parameter("cmd_vel_timeout", 0.5)
-    node.declare_parameter("odom_frame", "odom")
-    node.declare_parameter("base_frame", "base")
-    node.declare_parameter("publish_odom_tf", True)
-    node.declare_parameter("odom_source_mode", "hybrid")
+    node = None
+    executor = None
+    rclpy_initialized = False
 
-    odom_frame = node.get_parameter("odom_frame").value
-    base_frame = node.get_parameter("base_frame").value
-    publish_odom_tf = node.get_parameter("publish_odom_tf").value
-    odom_source_mode = str(node.get_parameter("odom_source_mode").value).strip().lower()
-    if odom_source_mode not in ("position", "velocity", "hybrid"):
-        node.get_logger().warn(
-            f"Unsupported odom_source_mode='{odom_source_mode}', falling back to 'hybrid'"
-        )
-        odom_source_mode = "hybrid"
+    try:
+        # Now safe to initialize ROS2 (creates its own CycloneDDS domain)
+        rclpy.init(args=ros_args)
+        rclpy_initialized = True
 
-    node.get_logger().info(
-        f"SDK2 worker PID {sdk_proc.pid}, interface: {iface_label}, "
-        f"odom_source_mode={odom_source_mode}"
-    )
+        node = Node("go2w_bridge")
 
-    # Publishers
-    odom_pub = node.create_publisher(Odometry, "odom", 10)
-    imu_pub = node.create_publisher(Imu, "imu/data", 10)
-    tf_broadcaster = tf2_ros.TransformBroadcaster(node)
+        # Parameters (for logging; net_iface already parsed above)
+        node.declare_parameter("network_interface", net_iface)
+        node.declare_parameter("cmd_vel_timeout", 0.5)
+        node.declare_parameter("angular_deadband", 0.1)
+        node.declare_parameter("odom_frame", "odom")
+        node.declare_parameter("base_frame", "base")
+        node.declare_parameter("publish_odom_tf", True)
+        node.declare_parameter("odom_source_mode", "hybrid")
 
-    # Callback groups
-    cmd_cb_group = MutuallyExclusiveCallbackGroup()
-    odom_cb_group = MutuallyExclusiveCallbackGroup()
-
-    # cmd_vel subscriber
-    def _cmd_vel_cb(msg: Twist):
-        try:
-            cmd_queue.put_nowait({
-                "type": "move",
-                "vx": msg.linear.x,
-                "vy": msg.linear.y,
-                "vyaw": msg.angular.z,
-            })
-        except Exception:
-            pass
-
-    node.create_subscription(
-        Twist, "cmd_vel", _cmd_vel_cb, 10, callback_group=cmd_cb_group
-    )
-
-    # cmd_control subscriber
-    def _cmd_control_cb(msg: String):
-        action = msg.data.strip().lower()
-        node.get_logger().info(f"Control command: {action}")
-        try:
-            cmd_queue.put_nowait({"type": "control", "action": action})
-        except Exception:
-            pass
-
-    node.create_subscription(
-        String, "cmd_control", _cmd_control_cb, 10, callback_group=cmd_cb_group
-    )
-
-    # Odom timer: read state from SDK2 child and publish
-    next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
-    sdk_proc_dead_logged = False
-    last_state_time = None
-    last_reported_pos = None
-    integrated_pos = [0.0, 0.0, 0.0]
-    using_velocity_fallback = False
-
-    def _odom_timer_cb():
-        nonlocal next_no_state_warn
-        nonlocal sdk_proc_dead_logged
-        nonlocal last_state_time
-        nonlocal last_reported_pos
-        nonlocal integrated_pos
-        nonlocal using_velocity_fallback
-        if not sdk_proc.is_alive():
-            if not sdk_proc_dead_logged:
-                node.get_logger().error(
-                    "SDK2 worker exited; /odom and odom->base TF are unavailable."
-                )
-                sdk_proc_dead_logged = True
-            return
-
-        try:
-            odom_data = state_queue.get_nowait()
-        except Exception:
-            if time.monotonic() >= next_no_state_warn:
-                node.get_logger().warn(
-                    "Still waiting for SportModeState; /odom and odom->base TF "
-                    "are not being published yet."
-                )
-                next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
-            return
-
-        next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
-        state_time = time.monotonic()
-        dt = 0.0
-        if last_state_time is not None:
-            dt = min(max(state_time - last_state_time, 0.0), 0.2)
-        last_state_time = state_time
-
-        raw_pos = list(odom_data["pos"])
-        velocity = list(odom_data["vel"])
-        velocity_norm = _vector_norm(velocity)
-        yaw_rate = abs(float(odom_data["yaw_speed"]))
-        position_norm = _vector_norm(raw_pos)
-        position_delta = 0.0
-        if last_reported_pos is not None:
-            position_delta = _vector_norm(
-                [raw_pos[i] - last_reported_pos[i] for i in range(3)]
+        angular_deadband = float(node.get_parameter("angular_deadband").value)
+        odom_frame = node.get_parameter("odom_frame").value
+        base_frame = node.get_parameter("base_frame").value
+        publish_odom_tf = node.get_parameter("publish_odom_tf").value
+        odom_source_mode = str(
+            node.get_parameter("odom_source_mode").value
+        ).strip().lower()
+        if odom_source_mode not in ("position", "velocity", "hybrid"):
+            node.get_logger().warn(
+                "Unsupported odom_source_mode="
+                f"'{odom_source_mode}', falling back to 'hybrid'"
             )
-        last_reported_pos = raw_pos
+            odom_source_mode = "hybrid"
 
-        reported_position_is_useful = (
-            position_norm > POSITION_USEFUL_NORM_EPS
-            or position_delta > POSITION_USEFUL_DELTA_EPS
-        )
-        motion_is_reported = (
-            velocity_norm > MOTION_VELOCITY_EPS or yaw_rate > MOTION_YAW_RATE_EPS
+        node.get_logger().info(
+            f"SDK2 worker PID {sdk_proc.pid}, interface: {iface_label}, "
+            f"odom_source_mode={odom_source_mode}, "
+            f"angular_deadband={angular_deadband:.3f}"
         )
 
-        if odom_source_mode == "position":
-            integrated_pos = raw_pos.copy()
-            odom_pos = raw_pos
-        elif odom_source_mode == "velocity":
-            if dt > 0.0:
-                for i in range(3):
-                    integrated_pos[i] += velocity[i] * dt
-            odom_pos = integrated_pos.copy()
-        else:
-            if reported_position_is_useful:
+        # Publishers
+        odom_pub = node.create_publisher(Odometry, "odom", 10)
+        imu_pub = node.create_publisher(Imu, "imu/data", 10)
+        tf_broadcaster = tf2_ros.TransformBroadcaster(node)
+
+        # Callback groups
+        cmd_cb_group = MutuallyExclusiveCallbackGroup()
+        odom_cb_group = MutuallyExclusiveCallbackGroup()
+
+        # cmd_vel subscriber
+        def _cmd_vel_cb(msg: Twist):
+            try:
+                cmd_queue.put_nowait({
+                    "type": "move",
+                    "vx": msg.linear.x,
+                    "vy": msg.linear.y,
+                    "vyaw": apply_angular_deadband(msg.angular.z, angular_deadband),
+                })
+            except Exception:
+                pass
+
+        node.create_subscription(
+            Twist, "cmd_vel", _cmd_vel_cb, 10, callback_group=cmd_cb_group
+        )
+
+        # cmd_control subscriber
+        def _cmd_control_cb(msg: String):
+            action = msg.data.strip().lower()
+            node.get_logger().info(f"Control command: {action}")
+            try:
+                cmd_queue.put_nowait({"type": "control", "action": action})
+            except Exception:
+                pass
+
+        node.create_subscription(
+            String, "cmd_control", _cmd_control_cb, 10, callback_group=cmd_cb_group
+        )
+
+        # Odom timer: read state from SDK2 child and publish
+        next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+        sdk_proc_dead_logged = False
+        last_state_time = None
+        last_reported_pos = None
+        integrated_pos = [0.0, 0.0, 0.0]
+        using_velocity_fallback = False
+
+        def _odom_timer_cb():
+            nonlocal next_no_state_warn
+            nonlocal sdk_proc_dead_logged
+            nonlocal last_state_time
+            nonlocal last_reported_pos
+            nonlocal integrated_pos
+            nonlocal using_velocity_fallback
+            if not sdk_proc.is_alive():
+                if not sdk_proc_dead_logged:
+                    node.get_logger().error(
+                        "SDK2 worker exited; /odom and odom->base TF are unavailable."
+                    )
+                    sdk_proc_dead_logged = True
+                return
+
+            try:
+                odom_data = state_queue.get_nowait()
+            except Exception:
+                if time.monotonic() >= next_no_state_warn:
+                    node.get_logger().warn(
+                        "Still waiting for SportModeState; /odom and odom->base TF "
+                        "are not being published yet."
+                    )
+                    next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+                return
+
+            next_no_state_warn = time.monotonic() + NO_STATE_WARN_PERIOD
+            state_time = time.monotonic()
+            dt = 0.0
+            if last_state_time is not None:
+                dt = min(max(state_time - last_state_time, 0.0), 0.2)
+            last_state_time = state_time
+
+            raw_pos = list(odom_data["pos"])
+            velocity = list(odom_data["vel"])
+            velocity_norm = _vector_norm(velocity)
+            yaw_rate = abs(float(odom_data["yaw_speed"]))
+            position_norm = _vector_norm(raw_pos)
+            position_delta = 0.0
+            if last_reported_pos is not None:
+                position_delta = _vector_norm(
+                    [raw_pos[i] - last_reported_pos[i] for i in range(3)]
+                )
+            last_reported_pos = raw_pos
+
+            reported_position_is_useful = (
+                position_norm > POSITION_USEFUL_NORM_EPS
+                or position_delta > POSITION_USEFUL_DELTA_EPS
+            )
+            motion_is_reported = (
+                velocity_norm > MOTION_VELOCITY_EPS or yaw_rate > MOTION_YAW_RATE_EPS
+            )
+
+            if odom_source_mode == "position":
                 integrated_pos = raw_pos.copy()
                 odom_pos = raw_pos
-                if using_velocity_fallback:
-                    node.get_logger().info(
-                        "SportModeState position resumed; switching /odom "
-                        "translation back to reported position."
-                    )
-                    using_velocity_fallback = False
-            else:
+            elif odom_source_mode == "velocity":
                 if dt > 0.0:
                     for i in range(3):
                         integrated_pos[i] += velocity[i] * dt
                 odom_pos = integrated_pos.copy()
+            else:
+                if reported_position_is_useful:
+                    integrated_pos = raw_pos.copy()
+                    odom_pos = raw_pos
+                    if using_velocity_fallback:
+                        node.get_logger().info(
+                            "SportModeState position resumed; switching /odom "
+                            "translation back to reported position."
+                        )
+                        using_velocity_fallback = False
+                else:
+                    if dt > 0.0:
+                        for i in range(3):
+                            integrated_pos[i] += velocity[i] * dt
+                    odom_pos = integrated_pos.copy()
 
-                if motion_is_reported and not using_velocity_fallback:
-                    node.get_logger().warn(
-                        "SportModeState position is zero/stale while motion is "
-                        "reported; using integrated velocity for /odom translation."
-                    )
-                    using_velocity_fallback = True
+                    if motion_is_reported and not using_velocity_fallback:
+                        node.get_logger().warn(
+                            "SportModeState position is zero/stale while motion is "
+                            "reported; using integrated velocity for /odom translation."
+                        )
+                        using_velocity_fallback = True
 
-        now = node.get_clock().now().to_msg()
+            now = node.get_clock().now().to_msg()
 
-        odom = Odometry()
-        odom.header.stamp = now
-        odom.header.frame_id = odom_frame
-        odom.child_frame_id = base_frame
+            odom = Odometry()
+            odom.header.stamp = now
+            odom.header.frame_id = odom_frame
+            odom.child_frame_id = base_frame
 
-        odom.pose.pose.position.x = odom_pos[0]
-        odom.pose.pose.position.y = odom_pos[1]
-        odom.pose.pose.position.z = odom_pos[2]
+            odom.pose.pose.position.x = odom_pos[0]
+            odom.pose.pose.position.y = odom_pos[1]
+            odom.pose.pose.position.z = odom_pos[2]
 
-        roll, pitch, yaw = odom_data["rpy"]
-        odom.pose.pose.orientation = euler_to_quaternion(roll, pitch, yaw)
+            roll, pitch, yaw = odom_data["rpy"]
+            odom.pose.pose.orientation = euler_to_quaternion(roll, pitch, yaw)
 
-        odom.twist.twist.linear.x = odom_data["vel"][0]
-        odom.twist.twist.linear.y = odom_data["vel"][1]
-        odom.twist.twist.linear.z = odom_data["vel"][2]
-        odom.twist.twist.angular.z = odom_data["yaw_speed"]
+            odom.twist.twist.linear.x = odom_data["vel"][0]
+            odom.twist.twist.linear.y = odom_data["vel"][1]
+            odom.twist.twist.linear.z = odom_data["vel"][2]
+            odom.twist.twist.angular.z = odom_data["yaw_speed"]
 
-        odom_pub.publish(odom)
+            odom_pub.publish(odom)
 
-        if publish_odom_tf:
-            t = TransformStamped()
-            t.header.stamp = now
-            t.header.frame_id = odom_frame
-            t.child_frame_id = base_frame
-            t.transform.translation.x = odom_pos[0]
-            t.transform.translation.y = odom_pos[1]
-            t.transform.translation.z = odom_pos[2]
-            t.transform.rotation = odom.pose.pose.orientation
-            tf_broadcaster.sendTransform(t)
+            if publish_odom_tf:
+                t = TransformStamped()
+                t.header.stamp = now
+                t.header.frame_id = odom_frame
+                t.child_frame_id = base_frame
+                t.transform.translation.x = odom_pos[0]
+                t.transform.translation.y = odom_pos[1]
+                t.transform.translation.z = odom_pos[2]
+                t.transform.rotation = odom.pose.pose.orientation
+                tf_broadcaster.sendTransform(t)
 
-        imu_msg = Imu()
-        imu_msg.header.stamp = now
-        imu_msg.header.frame_id = "imu"
-        imu_msg.orientation = euler_to_quaternion(roll, pitch, yaw)
-        imu_msg.angular_velocity.x = odom_data["gyro"][0]
-        imu_msg.angular_velocity.y = odom_data["gyro"][1]
-        imu_msg.angular_velocity.z = odom_data["gyro"][2]
-        imu_msg.linear_acceleration.x = odom_data["accel"][0]
-        imu_msg.linear_acceleration.y = odom_data["accel"][1]
-        imu_msg.linear_acceleration.z = odom_data["accel"][2]
-        imu_pub.publish(imu_msg)
+            imu_msg = Imu()
+            imu_msg.header.stamp = now
+            imu_msg.header.frame_id = "imu"
+            imu_msg.orientation = euler_to_quaternion(roll, pitch, yaw)
+            imu_msg.angular_velocity.x = odom_data["gyro"][0]
+            imu_msg.angular_velocity.y = odom_data["gyro"][1]
+            imu_msg.angular_velocity.z = odom_data["gyro"][2]
+            imu_msg.linear_acceleration.x = odom_data["accel"][0]
+            imu_msg.linear_acceleration.y = odom_data["accel"][1]
+            imu_msg.linear_acceleration.z = odom_data["accel"][2]
+            imu_pub.publish(imu_msg)
 
-    node.create_timer(0.02, _odom_timer_cb, callback_group=odom_cb_group)
+        node.create_timer(0.02, _odom_timer_cb, callback_group=odom_cb_group)
 
-    node.get_logger().info("GO2W Bridge ready (multiprocessing). Waiting for cmd_vel...")
+        node.get_logger().info(
+            "GO2W Bridge ready (multiprocessing). Waiting for cmd_vel..."
+        )
 
-    executor = MultiThreadedExecutor(num_threads=4)
-    executor.add_node(node)
-    try:
+        executor = MultiThreadedExecutor(num_threads=4)
+        executor.add_node(node)
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info("Shutting down, stopping SDK2 worker...")
+        if node is not None:
+            try:
+                node.get_logger().info("Shutting down, stopping SDK2 worker...")
+            except Exception:
+                pass
+        else:
+            print("[go2w_bridge] Shutting down, stopping SDK2 worker...", flush=True)
         shutdown_event.set()
         sdk_proc.join(timeout=3.0)
         if sdk_proc.is_alive():
             sdk_proc.terminate()
-        node.destroy_node()
-        rclpy.shutdown()
+            sdk_proc.join(timeout=1.0)
+        if executor is not None:
+            try:
+                executor.shutdown()
+            except Exception:
+                pass
+        if node is not None:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
+        if rclpy_initialized:
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

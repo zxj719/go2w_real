@@ -19,10 +19,14 @@ def _get_env_text(name, default):
 
 DEFAULT_WAYPOINT_FILE = _get_env_text(
     "GO2W_WAYPOINT_FILE",
-    "/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml",
+    "/home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml",#go2w_waypoints  go2w_map_waypoints
 )
 DEFAULT_ACTION_NAME = "/navigate_to_pose"
+DEFAULT_PLANNER_ACTION_NAME = "/compute_path_to_pose"
 DEFAULT_SERVER_TIMEOUT = 10.0
+DEFAULT_ABORT_REPLAN_RETRIES = 1
+DEFAULT_IGNORE_WAYPOINT_YAW = True
+DEFAULT_NEAR_GOAL_DISTANCE = 0.40
 
 
 def _print_help():
@@ -33,6 +37,9 @@ def _print_help():
         f"  --waypoint-file PATH       Waypoint YAML path, default: {DEFAULT_WAYPOINT_FILE}\n"
         f"  --action-name NAME         Nav2 action name, default: {DEFAULT_ACTION_NAME}\n"
         f"  --server-timeout SEC       Wait timeout for Nav2 action server, default: {DEFAULT_SERVER_TIMEOUT:.1f}\n"
+        f"  --abort-replan-retries N   Retry after Nav2 abort if planner still has a path, default: {DEFAULT_ABORT_REPLAN_RETRIES}\n"
+        f"  --near-goal-distance M     Treat this CLI goal as reached when feedback distance is within M, default: {DEFAULT_NEAR_GOAL_DISTANCE:.2f}\n"
+        "  --use-waypoint-yaw        Respect stored waypoint yaw instead of stopping on XY only\n"
         "  --waypoint ID_NAME_OR_INDEX Send one waypoint directly without prompting\n"
         "  --list-only                Only print available waypoints and exit\n"
         "  -h, --help                 Show this help message\n"
@@ -47,6 +54,9 @@ def _parse_cli_args(raw_args):
         "waypoint_file": DEFAULT_WAYPOINT_FILE,
         "action_name": DEFAULT_ACTION_NAME,
         "server_timeout": DEFAULT_SERVER_TIMEOUT,
+        "abort_replan_retries": DEFAULT_ABORT_REPLAN_RETRIES,
+        "near_goal_distance": DEFAULT_NEAR_GOAL_DISTANCE,
+        "ignore_waypoint_yaw": DEFAULT_IGNORE_WAYPOINT_YAW,
         "waypoint_selector": None,
         "list_only": False,
     }
@@ -81,6 +91,26 @@ def _parse_cli_args(raw_args):
             continue
         if arg.startswith("--server-timeout="):
             config["server_timeout"] = float(arg.split("=", 1)[1])
+            i += 1
+            continue
+        if arg == "--abort-replan-retries" and i + 1 < len(raw_args):
+            config["abort_replan_retries"] = max(0, int(raw_args[i + 1]))
+            i += 2
+            continue
+        if arg.startswith("--abort-replan-retries="):
+            config["abort_replan_retries"] = max(0, int(arg.split("=", 1)[1]))
+            i += 1
+            continue
+        if arg == "--near-goal-distance" and i + 1 < len(raw_args):
+            config["near_goal_distance"] = max(0.0, float(raw_args[i + 1]))
+            i += 2
+            continue
+        if arg.startswith("--near-goal-distance="):
+            config["near_goal_distance"] = max(0.0, float(arg.split("=", 1)[1]))
+            i += 1
+            continue
+        if arg == "--use-waypoint-yaw":
+            config["ignore_waypoint_yaw"] = False
             i += 1
             continue
         if arg == "--waypoint" and i + 1 < len(raw_args):
@@ -237,44 +267,130 @@ def _goal_status_label(status):
     return labels.get(status, f"STATUS_{status}")
 
 
+def _apply_waypoint_to_pose_stamped(
+    node,
+    pose_stamped,
+    waypoint,
+    ignore_waypoint_yaw=DEFAULT_IGNORE_WAYPOINT_YAW,
+):
+    pose_stamped.header.frame_id = waypoint["frame_id"]
+    pose_stamped.header.stamp = node.get_clock().now().to_msg()
+    pose_stamped.pose.position.x = waypoint["position"]["x"]
+    pose_stamped.pose.position.y = waypoint["position"]["y"]
+    pose_stamped.pose.position.z = waypoint["position"]["z"]
+    if ignore_waypoint_yaw:
+        pose_stamped.pose.orientation.x = 0.0
+        pose_stamped.pose.orientation.y = 0.0
+        pose_stamped.pose.orientation.z = 0.0
+        pose_stamped.pose.orientation.w = 1.0
+    else:
+        pose_stamped.pose.orientation.x = waypoint["orientation"]["x"]
+        pose_stamped.pose.orientation.y = waypoint["orientation"]["y"]
+        pose_stamped.pose.orientation.z = waypoint["orientation"]["z"]
+        pose_stamped.pose.orientation.w = waypoint["orientation"]["w"]
+
+
 class WaypointNavigator:
-    def __init__(self, node, action_name, server_timeout):
+    def __init__(
+        self,
+        node,
+        action_name,
+        server_timeout,
+        abort_replan_retries,
+        near_goal_distance=DEFAULT_NEAR_GOAL_DISTANCE,
+        ignore_waypoint_yaw=DEFAULT_IGNORE_WAYPOINT_YAW,
+    ):
+        from nav2_msgs.action import ComputePathToPose
         from nav2_msgs.action import NavigateToPose
         from rclpy.action import ActionClient
 
         self.node = node
         self.server_timeout = server_timeout
+        self.abort_replan_retries = max(0, int(abort_replan_retries))
+        self.near_goal_distance = max(0.0, float(near_goal_distance))
+        self.ignore_waypoint_yaw = bool(ignore_waypoint_yaw)
+        self._compute_path_to_pose = ComputePathToPose
         self._navigate_to_pose = NavigateToPose
         self._client = ActionClient(node, NavigateToPose, action_name)
+        self._planner_client = ActionClient(
+            node,
+            ComputePathToPose,
+            DEFAULT_PLANNER_ACTION_NAME,
+        )
         self._active_goal_handle = None
         self._last_feedback_log_time = 0.0
+        self._near_goal_seen = False
+        self._near_goal_cancel_future = None
 
     def navigate_to(self, waypoint):
+        retry_budget = self.abort_replan_retries
+
+        for attempt_index in range(retry_budget + 1):
+            status_name = self._navigate_once(waypoint)
+            if status_name == "SUCCEEDED":
+                return True
+            if status_name != "ABORTED":
+                return False
+
+            if attempt_index >= retry_budget:
+                self.node.get_logger().error(
+                    f"Waypoint '{waypoint['name']}' aborted and retry budget exhausted."
+                )
+                return False
+
+            try:
+                has_path = self.planner_has_path(waypoint)
+            except Exception as exc:
+                self.node.get_logger().error(
+                    "Nav2 aborted and replanning probe failed: "
+                    f"{exc}"
+                )
+                return False
+
+            if not has_path:
+                self.node.get_logger().error(
+                    f"Waypoint '{waypoint['name']}' aborted and planner could not find a path to the target."
+                )
+                return False
+
+            next_attempt = attempt_index + 1
+            self.node.get_logger().info(
+                "Planner still has a path; retrying current goal "
+                f"(attempt {next_attempt}/{retry_budget})."
+            )
+
+        return False
+
+    def _navigate_once(self, waypoint):
         import rclpy
 
+        self._near_goal_seen = False
+        self._near_goal_cancel_future = None
         self.node.get_logger().info(
             f"Waiting for Nav2 action server for up to {self.server_timeout:.1f}s..."
         )
         if not self._client.wait_for_server(timeout_sec=self.server_timeout):
             self.node.get_logger().error("Nav2 action server is not available.")
-            return False
+            return "SERVER_UNAVAILABLE"
 
         goal_msg = self._navigate_to_pose.Goal()
-        goal_msg.pose.header.frame_id = waypoint["frame_id"]
-        goal_msg.pose.header.stamp = self.node.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = waypoint["position"]["x"]
-        goal_msg.pose.pose.position.y = waypoint["position"]["y"]
-        goal_msg.pose.pose.position.z = waypoint["position"]["z"]
-        goal_msg.pose.pose.orientation.x = waypoint["orientation"]["x"]
-        goal_msg.pose.pose.orientation.y = waypoint["orientation"]["y"]
-        goal_msg.pose.pose.orientation.z = waypoint["orientation"]["z"]
-        goal_msg.pose.pose.orientation.w = waypoint["orientation"]["w"]
+        _apply_waypoint_to_pose_stamped(
+            self.node,
+            goal_msg.pose,
+            waypoint,
+            self.ignore_waypoint_yaw,
+        )
 
+        yaw_text = (
+            "yaw=ignored"
+            if self.ignore_waypoint_yaw
+            else f"yaw={math.degrees(waypoint['yaw']):.1f} deg"
+        )
         self.node.get_logger().info(
             f"Sending Nav2 goal '{waypoint['name']}' "
             f"to x={waypoint['position']['x']:.3f}, "
             f"y={waypoint['position']['y']:.3f}, "
-            f"yaw={math.degrees(waypoint['yaw']):.1f} deg"
+            f"{yaw_text}"
         )
 
         send_goal_future = self._client.send_goal_async(
@@ -286,10 +402,10 @@ class WaypointNavigator:
 
         if goal_handle is None:
             self.node.get_logger().error("Failed to send Nav2 goal.")
-            return False
+            return "SEND_GOAL_FAILED"
         if not goal_handle.accepted:
             self.node.get_logger().warn("Nav2 rejected the waypoint goal.")
-            return False
+            return "REJECTED"
 
         self._active_goal_handle = goal_handle
         self.node.get_logger().info("Nav2 accepted the goal, waiting for result...")
@@ -301,19 +417,55 @@ class WaypointNavigator:
 
         if result is None:
             self.node.get_logger().error("Did not receive a Nav2 result.")
-            return False
+            return "NO_RESULT"
 
         status_name = _goal_status_label(result.status)
-        if status_name == "SUCCEEDED":
+        if status_name == "SUCCEEDED" or self._should_accept_near_goal_status(
+            status_name
+        ):
             self.node.get_logger().info(
                 f"Waypoint '{waypoint['name']}' reached successfully."
             )
-            return True
+            return "SUCCEEDED"
 
         self.node.get_logger().warn(
             f"Waypoint '{waypoint['name']}' finished with status {status_name}."
         )
-        return False
+        return status_name
+
+    def planner_has_path(self, waypoint):
+        import rclpy
+
+        if not self._planner_client.wait_for_server(timeout_sec=self.server_timeout):
+            raise RuntimeError(
+                "ComputePathToPose action server is not available within "
+                f"{self.server_timeout:.1f}s"
+            )
+
+        goal_msg = self._compute_path_to_pose.Goal()
+        _apply_waypoint_to_pose_stamped(
+            self.node,
+            goal_msg.pose,
+            waypoint,
+            self.ignore_waypoint_yaw,
+        )
+        goal_msg.planner_id = "GridBased"
+
+        send_goal_future = self._planner_client.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self.node, send_goal_future)
+        goal_handle = send_goal_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return False
+
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self.node, result_future)
+        result = result_future.result()
+        if result is None or _goal_status_label(result.status) != "SUCCEEDED":
+            return False
+
+        path = getattr(result.result, "path", None)
+        poses = getattr(path, "poses", None)
+        return bool(poses)
 
     def cancel_active_goal(self):
         import rclpy
@@ -325,6 +477,43 @@ class WaypointNavigator:
         cancel_future = self._active_goal_handle.cancel_goal_async()
         rclpy.spin_until_future_complete(self.node, cancel_future, timeout_sec=2.0)
         self._active_goal_handle = None
+
+    def destroy(self):
+        for client_name in ("_planner_client", "_client"):
+            client = getattr(self, client_name, None)
+            if client is None:
+                continue
+            try:
+                client.destroy()
+            except Exception:
+                pass
+            setattr(self, client_name, None)
+
+    def _should_accept_near_goal_status(self, status_name):
+        if not self.ignore_waypoint_yaw:
+            return False
+        if self.near_goal_distance <= 0.0:
+            return False
+        if not self._near_goal_seen:
+            return False
+        return status_name in ("ABORTED", "CANCELED")
+
+    def _maybe_request_near_goal_cancel(self, distance):
+        if not self.ignore_waypoint_yaw:
+            return
+        if self.near_goal_distance <= 0.0:
+            return
+        if distance is None or distance > self.near_goal_distance:
+            return
+
+        self._near_goal_seen = True
+        if self._active_goal_handle is None or self._near_goal_cancel_future is not None:
+            return
+
+        self.node.get_logger().info(
+            "Near-goal threshold reached; cancelling Nav2 goal and accepting this waypoint."
+        )
+        self._near_goal_cancel_future = self._active_goal_handle.cancel_goal_async()
 
     def _feedback_callback(self, feedback_msg):
         now = time.monotonic()
@@ -346,6 +535,7 @@ class WaypointNavigator:
         distance = None
         if hasattr(feedback, 'distance_remaining'):
             distance = float(feedback.distance_remaining)
+            self._maybe_request_near_goal_cancel(distance)
 
         # ETA（⚠️ Foxy 没有，这里做兼容）
         eta = None
@@ -436,6 +626,9 @@ def main(args=None):
         node,
         config["action_name"],
         config["server_timeout"],
+        config["abort_replan_retries"],
+        config["near_goal_distance"],
+        config["ignore_waypoint_yaw"],
     )
 
     try:
@@ -450,6 +643,7 @@ def main(args=None):
     except KeyboardInterrupt:
         navigator.cancel_active_goal()
     finally:
+        navigator.destroy()
         node.destroy_node()
         rclpy.shutdown()
 

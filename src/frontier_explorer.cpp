@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -477,8 +478,8 @@ private:
 
     typename rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
     options.goal_response_callback =
-      [this, seq](GoalHandleNavTo::SharedPtr handle) {
-        goal_response_callback(handle, seq);
+      [this, seq](std::shared_future<GoalHandleNavTo::SharedPtr> future) {
+        goal_response_callback(future.get(), seq);
       };
     options.feedback_callback =
       [this](

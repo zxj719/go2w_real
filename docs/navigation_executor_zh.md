@@ -174,6 +174,12 @@ ros2 run go2w_real navigation_executor.py \
 - 向发送端回传一条 `on_progress`
 - 其中 `status` 为 `paused`
 
+如果不是发送端主动中断，而是 Nav2 自己返回 `aborted`，执行器会先做一次
+`ComputePathToPose` 探路：
+
+- 还能规划出路径：自动重试当前目标一次
+- 已经规划不出路径：回传 `on_error`
+
 ### 5.3 心跳
 
 机器人侧会主动发送：
@@ -259,6 +265,7 @@ ros2 run go2w_real navigation_executor.py \
 - 当前任务会先尝试取消，再启动新任务
 - 收到 `abort_navigation` 时，会中断当前任务
 - 中断完成后，执行器回到 `idle`
+- 如果 Nav2 自己 `aborted`，执行器会先探路，再在仍有路径时自动重试一次
 - 断线后会自动重连
 
 ## 8. 常见调用方式

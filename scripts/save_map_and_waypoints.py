@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
 """
-Record named navigation waypoints from RViz Publish Point.
+Record navigation waypoints from the robot's current localized pose.
 
 Workflow:
-  1. Start SLAM and drive the robot to build the map.
+  1. Start SLAM/localization so map -> base TF is available.
   2. Run this script.
-  3. In RViz, use "Publish Point" to click waypoint positions.
-  4. The script records the clicked position.
-  5. The script reads the robot's current heading from TF.
-  6. Enter the waypoint name in the terminal.
-  7. Press Ctrl+C when finished. The script writes waypoint YAML only.
+  3. Press Enter to capture the robot's current pose in the map frame.
+  4. The script auto-assigns a POI id and waypoint name.
+  5. Press Ctrl+C when finished. The script overwrites waypoint YAML only.
 """
 
 import math
 import os
-import queue
 import sys
 import threading
 
 
 DEFAULT_WAYPOINT_FILE = "/home/unitree/ros_ws/src/go2w_waypoints.yaml"
-DEFAULT_CLICKED_POINT_TOPIC = "/clicked_point"
 DEFAULT_MAP_FRAME = "map"
 DEFAULT_BASE_FRAME = "base"
+DEFAULT_POI_ID_START = 13
 
 
 def _print_help():
@@ -31,8 +28,6 @@ def _print_help():
         "\n"
         "Options:\n"
         "  --waypoint-file PATH       Waypoint YAML path, default: /home/unitree/ros_ws/src/go2w_waypoints.yaml\n"
-        "  --clicked-point-topic TOPIC\n"
-        "                             RViz Publish Point topic, default: /clicked_point\n"
         "  --map-frame FRAME          Map frame for saved waypoints, default: map\n"
         "  --base-frame FRAME         Robot base frame used for default yaw, default: base\n"
         "  -h, --help                 Show this help message\n"
@@ -42,7 +37,6 @@ def _print_help():
 def _parse_cli_args(raw_args):
     config = {
         "waypoint_file": DEFAULT_WAYPOINT_FILE,
-        "clicked_point_topic": DEFAULT_CLICKED_POINT_TOPIC,
         "map_frame": DEFAULT_MAP_FRAME,
         "base_frame": DEFAULT_BASE_FRAME,
     }
@@ -61,14 +55,6 @@ def _parse_cli_args(raw_args):
             continue
         if arg.startswith("--waypoint-file="):
             config["waypoint_file"] = os.path.expanduser(arg.split("=", 1)[1])
-            i += 1
-            continue
-        if arg == "--clicked-point-topic" and i + 1 < len(raw_args):
-            config["clicked_point_topic"] = raw_args[i + 1]
-            i += 2
-            continue
-        if arg.startswith("--clicked-point-topic="):
-            config["clicked_point_topic"] = arg.split("=", 1)[1]
             i += 1
             continue
         if arg == "--map-frame" and i + 1 < len(raw_args):
@@ -115,14 +101,59 @@ def _yaml_quote(text):
     return f"'{escaped}'"
 
 
+def _default_waypoint_name(index):
+    return f"wp_{index:02d}"
+
+
+def _default_waypoint_id(index, poi_start=DEFAULT_POI_ID_START):
+    return f"POI_{poi_start + index - 1:03d}"
+
+
+def _extract_yaml_prefix(existing_text):
+    lines = existing_text.splitlines(keepends=True)
+    for idx, line in enumerate(lines):
+        if line.strip() == "waypoints:":
+            return "".join(lines[:idx])
+    return existing_text if existing_text.endswith("\n") or not existing_text else existing_text + "\n"
+
+
+def _serialize_waypoints_yaml(waypoints, existing_text=""):
+    parts = []
+    prefix = _extract_yaml_prefix(existing_text)
+    if prefix:
+        parts.append(prefix)
+        if not prefix.endswith("\n"):
+            parts.append("\n")
+
+    if not waypoints:
+        parts.append("waypoints: []\n")
+        return "".join(parts)
+
+    parts.append("waypoints:\n")
+    for wp in waypoints:
+        parts.append(f"  - id: {_yaml_quote(wp['id'])}\n")
+        parts.append(f"    name: {_yaml_quote(wp['name'])}\n")
+        parts.append(f"    frame_id: {_yaml_quote(wp['frame_id'])}\n")
+        parts.append("    position:\n")
+        parts.append(f"      x: {wp['position']['x']:.6f}\n")
+        parts.append(f"      y: {wp['position']['y']:.6f}\n")
+        parts.append(f"      z: {wp['position']['z']:.6f}\n")
+        parts.append(f"    yaw: {wp['yaw']:.6f}\n")
+        parts.append("    orientation:\n")
+        parts.append(f"      x: {wp['orientation']['x']:.6f}\n")
+        parts.append(f"      y: {wp['orientation']['y']:.6f}\n")
+        parts.append(f"      z: {wp['orientation']['z']:.6f}\n")
+        parts.append(f"      w: {wp['orientation']['w']:.6f}\n")
+
+    return "".join(parts)
+
+
 class MapWaypointRecorder:
     def __init__(self, node, config):
-        from geometry_msgs.msg import PointStamped
         import tf2_ros
 
         self.node = node
         self.waypoint_file = config["waypoint_file"]
-        self.clicked_point_topic = config["clicked_point_topic"]
         self.map_frame = config["map_frame"]
         self.base_frame = config["base_frame"]
 
@@ -131,17 +162,9 @@ class MapWaypointRecorder:
             self.tf_buffer, self.node, spin_thread=False
         )
 
-        self.pending_points = queue.Queue()
         self.waypoints = []
         self.waypoint_lock = threading.Lock()
         self.stop_event = threading.Event()
-
-        self.clicked_sub = self.node.create_subscription(
-            PointStamped,
-            self.clicked_point_topic,
-            self._clicked_point_cb,
-            10,
-        )
 
         self.prompt_thread = threading.Thread(
             target=self._prompt_loop,
@@ -151,76 +174,51 @@ class MapWaypointRecorder:
         self.prompt_thread.start()
 
         self.node.get_logger().info(
-            "Waypoint recorder ready. Use RViz Publish Point on "
-            f"{self.clicked_point_topic}. For each point, the script records "
-            "the clicked position, reads the robot's current heading, then "
-            f"asks for the waypoint name. YAML is written to {self.waypoint_file}."
-        )
-
-    def _clicked_point_cb(self, msg):
-        frame_id = msg.header.frame_id or self.map_frame
-        event = {
-            "frame_id": frame_id,
-            "x": float(msg.point.x),
-            "y": float(msg.point.y),
-            "z": float(msg.point.z),
-        }
-        self.pending_points.put(event)
-        self.node.get_logger().info(
-            f"Recorded clicked position in {frame_id}: "
-            f"x={event['x']:.3f}, y={event['y']:.3f}, z={event['z']:.3f}"
+            "Waypoint recorder ready. Press Enter to capture the robot's "
+            f"current pose from TF {self.map_frame} <- {self.base_frame}. "
+            f"YAML is written to {self.waypoint_file}."
         )
 
     def _default_name(self):
         with self.waypoint_lock:
-            return f"wp_{len(self.waypoints) + 1:02d}"
+            return _default_waypoint_name(len(self.waypoints) + 1)
 
-    def _unique_name(self, desired_name):
+    def _default_id(self):
         with self.waypoint_lock:
-            existing = {wp["name"] for wp in self.waypoints}
+            return _default_waypoint_id(len(self.waypoints) + 1)
 
-        if desired_name not in existing:
-            return desired_name
-
-        suffix = 2
-        while f"{desired_name}_{suffix}" in existing:
-            suffix += 1
-
-        unique_name = f"{desired_name}_{suffix}"
-        self.node.get_logger().warn(
-            f"Waypoint name '{desired_name}' already exists, using '{unique_name}'."
-        )
-        return unique_name
-
-    def _lookup_default_yaw(self, frame_id):
+    def _lookup_current_pose(self):
         import rclpy
         from rclpy.duration import Duration
 
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                frame_id,
-                self.base_frame,
-                rclpy.time.Time(),
-                timeout=Duration(seconds=0.5),
-            )
-            q = transform.transform.rotation
-            return _yaw_from_quaternion(q.x, q.y, q.z, q.w), True
-        except Exception as exc:
-            self.node.get_logger().warn(
-                f"Could not get default yaw from TF {frame_id} <- {self.base_frame}; "
-                f"using 0 deg. Reason: {exc}"
-            )
-            return 0.0, False
+        transform = self.tf_buffer.lookup_transform(
+            self.map_frame,
+            self.base_frame,
+            rclpy.time.Time(),
+            timeout=Duration(seconds=0.5),
+        )
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        yaw = _yaw_from_quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+        return {
+            "frame_id": self.map_frame,
+            "x": float(translation.x),
+            "y": float(translation.y),
+            "z": float(translation.z),
+            "yaw": yaw,
+        }
 
-    def _make_waypoint(self, event, name, yaw):
+    def _make_waypoint(self, pose, waypoint_id, name):
+        yaw = pose["yaw"]
         quat = _quaternion_from_yaw(yaw)
         return {
+            "id": waypoint_id,
             "name": name,
-            "frame_id": event["frame_id"] or self.map_frame,
+            "frame_id": pose["frame_id"] or self.map_frame,
             "position": {
-                "x": event["x"],
-                "y": event["y"],
-                "z": event["z"],
+                "x": pose["x"],
+                "y": pose["y"],
+                "z": pose["z"],
             },
             "yaw": yaw,
             "orientation": quat,
@@ -237,49 +235,46 @@ class MapWaypointRecorder:
     def _prompt_loop(self):
         while not self.stop_event.is_set():
             try:
-                event = self.pending_points.get(timeout=0.2)
-            except queue.Empty:
-                continue
-
-            default_name = self._default_name()
-            default_yaw, has_tf_yaw = self._lookup_default_yaw(event["frame_id"])
-            default_yaw_deg = math.degrees(default_yaw)
-
-            print(
-                "\n[waypoint] step 1/3 position recorded: "
-                f"frame={event['frame_id']} "
-                f"x={event['x']:.3f} y={event['y']:.3f} z={event['z']:.3f}",
-                flush=True,
-            )
-            if has_tf_yaw:
-                print(
-                    "[waypoint] step 2/3 current heading recorded: "
-                    f"{default_yaw_deg:.1f} deg",
-                    flush=True,
+                raw_text = input(
+                    "[waypoint] Press Enter to capture current pose ('q' to quit): "
                 )
-            else:
-                print(
-                    "[waypoint] step 2/3 current heading unavailable, "
-                    "using 0.0 deg",
-                    flush=True,
-                )
-
-            try:
-                raw_name = input(
-                    f"[waypoint] step 3/3 waypoint name [{default_name}] "
-                    "('skip' to ignore): "
-                ).strip()
             except EOFError:
-                raw_name = ""
+                raw_text = "q"
 
             if self.stop_event.is_set():
                 break
-            if raw_name.lower() == "skip":
-                self.node.get_logger().info("Skipped clicked point.")
+
+            command = raw_text.strip().lower()
+            if command in ("q", "quit", "exit"):
+                self.stop_event.set()
+                break
+            if command:
+                self.node.get_logger().info(
+                    "Ignored non-empty input. Press Enter to capture or q to quit."
+                )
                 continue
 
-            waypoint_name = self._unique_name(raw_name or default_name)
-            waypoint = self._make_waypoint(event, waypoint_name, default_yaw)
+            try:
+                pose = self._lookup_current_pose()
+            except Exception as exc:
+                self.node.get_logger().warn(
+                    f"Could not get current pose from TF {self.map_frame} <- "
+                    f"{self.base_frame}: {exc}"
+                )
+                continue
+
+            waypoint_id = self._default_id()
+            waypoint_name = self._default_name()
+            waypoint = self._make_waypoint(pose, waypoint_id, waypoint_name)
+            yaw_deg = math.degrees(waypoint["yaw"])
+            self.node.get_logger().info(
+                "Captured current pose: "
+                f"id={waypoint_id}, name={waypoint_name}, "
+                f"x={waypoint['position']['x']:.3f}, "
+                f"y={waypoint['position']['y']:.3f}, "
+                f"z={waypoint['position']['z']:.3f}, "
+                f"yaw={yaw_deg:.1f} deg"
+            )
             self._store_waypoint(waypoint, "interactive")
 
     def _write_waypoints_file(self):
@@ -290,49 +285,22 @@ class MapWaypointRecorder:
         with self.waypoint_lock:
             waypoints_snapshot = list(self.waypoints)
 
+        existing_text = ""
+        if os.path.exists(waypoint_path):
+            with open(waypoint_path, "r", encoding="utf-8") as handle:
+                existing_text = handle.read()
+
+        rendered_yaml = _serialize_waypoints_yaml(
+            waypoints_snapshot,
+            existing_text=existing_text,
+        )
         with open(tmp_path, "w", encoding="utf-8") as handle:
-            if not waypoints_snapshot:
-                handle.write("waypoints: []\n")
-            else:
-                handle.write("waypoints:\n")
-                for wp in waypoints_snapshot:
-                    handle.write(f"  - name: {_yaml_quote(wp['name'])}\n")
-                    handle.write(f"    frame_id: {_yaml_quote(wp['frame_id'])}\n")
-                    handle.write("    position:\n")
-                    handle.write(f"      x: {wp['position']['x']:.6f}\n")
-                    handle.write(f"      y: {wp['position']['y']:.6f}\n")
-                    handle.write(f"      z: {wp['position']['z']:.6f}\n")
-                    handle.write(f"    yaw: {wp['yaw']:.6f}\n")
-                    handle.write("    orientation:\n")
-                    handle.write(f"      x: {wp['orientation']['x']:.6f}\n")
-                    handle.write(f"      y: {wp['orientation']['y']:.6f}\n")
-                    handle.write(f"      z: {wp['orientation']['z']:.6f}\n")
-                    handle.write(f"      w: {wp['orientation']['w']:.6f}\n")
+            handle.write(rendered_yaml)
 
         os.replace(tmp_path, waypoint_path)
 
-    def _drain_pending_points(self):
-        drained_count = 0
-        while True:
-            try:
-                event = self.pending_points.get_nowait()
-            except queue.Empty:
-                break
-
-            default_name = self._unique_name(self._default_name())
-            default_yaw, _ = self._lookup_default_yaw(event["frame_id"])
-            waypoint = self._make_waypoint(event, default_name, default_yaw)
-            self._store_waypoint(waypoint, "shutdown-auto")
-            drained_count += 1
-
-        if drained_count:
-            self.node.get_logger().warn(
-                f"Auto-saved {drained_count} queued clicked points during shutdown."
-            )
-
     def shutdown(self):
         self.stop_event.set()
-        self._drain_pending_points()
         self._write_waypoints_file()
         self.node.get_logger().info(
             f"Waypoint YAML written to {os.path.expanduser(self.waypoint_file)}"

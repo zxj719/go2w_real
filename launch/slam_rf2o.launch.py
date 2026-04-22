@@ -1,6 +1,13 @@
 """
-GO2W real robot SLAM + Nav2 using lidar-only odometry:
-  pointcloud -> scan -> rf2o_laser_odometry -> slam_toolbox -> Nav2 + RViz
+GO2W real robot SLAM + Nav2 with fused local odometry:
+  sportmodestate -> /sport_odom + /sport_imu -> robot_localization EKF -> /odom
+  pointcloud -> scan -> slam_toolbox -> Nav2
+
+Supports two SLAM modes:
+  - localization: continue from a serialized slam_toolbox map prefix
+  - mapping: start a fresh online async map
+
+Optionally starts the frontier explorer after Nav2 is online.
 
 Usage:
   ros2 launch go2w_real slam_rf2o.launch.py network_interface:=eth0
@@ -8,7 +15,7 @@ Usage:
 This launch assumes:
   - the robot is already standing
   - lidar points are available on /unitree/slam_lidar/points
-  - RViz is used to send navigation goals to Nav2
+  - RViz is optional
 """
 
 import os
@@ -24,13 +31,14 @@ from launch.actions import (
     SetEnvironmentVariable,
     TimerAction,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import (
     Command,
     EnvironmentVariable,
     FindExecutable,
     LaunchConfiguration,
+    PythonExpression,
 )
 
 from launch_ros.actions import Node, SetParameter
@@ -40,19 +48,39 @@ from nav2_common.launch import RewrittenYaml
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
-    slam_toolbox_dir = get_package_share_directory("slam_toolbox")
 
     network_interface = LaunchConfiguration("network_interface")
     use_rviz = LaunchConfiguration("use_rviz")
     cloud_topic = LaunchConfiguration("cloud_topic")
     lidar_yaw_offset = LaunchConfiguration("lidar_yaw_offset")
     rviz_software_rendering = LaunchConfiguration("rviz_software_rendering")
+    slam_mode = LaunchConfiguration("slam_mode")
     slam_map_file = LaunchConfiguration("slam_map_file")
+    angular_deadband = LaunchConfiguration("angular_deadband")
+    use_odom_fusion = LaunchConfiguration("use_odom_fusion")
+    odom_fusion_params_file = LaunchConfiguration("odom_fusion_params_file")
+    enable_motion_executor = LaunchConfiguration("enable_motion_executor")
+    motion_executor_mode = LaunchConfiguration("motion_executor_mode")
+    start_explorer = LaunchConfiguration("start_explorer")
+    explorer_params_file = LaunchConfiguration("explorer_params_file")
+    explorer_start_delay = LaunchConfiguration("explorer_start_delay")
 
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
-    slam_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
+    slam_localization_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
+    slam_mapping_params_file = os.path.join(
+        pkg_dir, "config", "slam_mapping_params.yaml"
+    )
     nav2_params_file = os.path.join(pkg_dir, "config", "nav2_params_foxy.yaml")
+    odom_fusion_default_params_file = os.path.join(
+        pkg_dir, "config", "odom_fusion_params.yaml"
+    )
+    motion_executor_params_file = os.path.join(
+        pkg_dir, "config", "go2w_motion_executor.yaml"
+    )
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
+    default_explorer_params_file = os.path.join(
+        pkg_dir, "config", "frontier_explorer_params.yaml"
+    )
     rviz_config_file = os.path.join(pkg_dir, "rviz", "nav2_real.rviz")
     configured_params = RewrittenYaml(
         source_file=nav2_params_file,
@@ -60,10 +88,22 @@ def generate_launch_description():
         param_rewrites={"autostart": "true"},
         convert_types=True,
     )
-    configured_slam_params = RewrittenYaml(
-        source_file=slam_params_file,
+    configured_localization_slam_params = RewrittenYaml(
+        source_file=slam_localization_params_file,
         root_key="",
-        param_rewrites={"map_file_name": slam_map_file},
+        param_rewrites={
+            "mode": "localization",
+            "map_file_name": slam_map_file,
+            "map_start_at_dock": "true",
+        },
+        convert_types=True,
+    )
+    configured_mapping_slam_params = RewrittenYaml(
+        source_file=slam_mapping_params_file,
+        root_key="",
+        param_rewrites={
+            "mode": "mapping",
+        },
         convert_types=True,
     )
 
@@ -98,15 +138,67 @@ def generate_launch_description():
         default_value="false",
         description="Force RViz to use software OpenGL rendering if hardware GL is unstable",
     )
+    declare_slam_mode = DeclareLaunchArgument(
+        "slam_mode",
+        default_value="localization",
+        description="slam_toolbox mode: localization or mapping",
+    )
     declare_slam_map_file = DeclareLaunchArgument(
         "slam_map_file",
         default_value=EnvironmentVariable(
             "GO2W_SLAM_MAP_FILE",
-            default_value="/home/unitree/ros_ws/src/map/zt_0",
+            default_value="/home/unitree/ros_ws/src/map/",
         ),
         description=(
             "Serialized slam_toolbox map prefix without .data/.posegraph suffix"
         ),
+    )
+    declare_angular_deadband = DeclareLaunchArgument(
+        "angular_deadband",
+        default_value="0.1",
+        description=(
+            "Clamp cmd_vel angular.z to zero when its magnitude is below this threshold"
+        ),
+    )
+    declare_use_odom_fusion = DeclareLaunchArgument(
+        "use_odom_fusion",
+        default_value="true",
+        description=(
+            "Publish /odom from robot_localization EKF fused from "
+            "/sport_odom + /sport_imu; set false to fall back to RF2O odom"
+        ),
+    )
+    declare_odom_fusion_params_file = DeclareLaunchArgument(
+        "odom_fusion_params_file",
+        default_value=odom_fusion_default_params_file,
+        description="robot_localization EKF parameters for fused /odom output",
+    )
+    declare_enable_motion_executor = DeclareLaunchArgument(
+        "enable_motion_executor",
+        default_value="false",
+        description=(
+            "Enable GO2W segmented motion execution between Nav2 and the bridge"
+        ),
+    )
+    declare_motion_executor_mode = DeclareLaunchArgument(
+        "motion_executor_mode",
+        default_value="shadow",
+        description="Runtime mode for go2w_motion_executor: shadow or active",
+    )
+    declare_start_explorer = DeclareLaunchArgument(
+        "start_explorer",
+        default_value="false",
+        description="Start the frontier explorer after Nav2 becomes active",
+    )
+    declare_explorer_params_file = DeclareLaunchArgument(
+        "explorer_params_file",
+        default_value=default_explorer_params_file,
+        description="Frontier explorer parameters file",
+    )
+    declare_explorer_start_delay = DeclareLaunchArgument(
+        "explorer_start_delay",
+        default_value="8.0",
+        description="Seconds to wait after Nav2 launch before starting exploration",
     )
 
     stdout_linebuf = SetEnvironmentVariable(
@@ -170,6 +262,7 @@ def generate_launch_description():
         parameters=[
             {
                 "cmd_vel_timeout": 0.5,
+                "angular_deadband": angular_deadband,
                 "odom_frame": "odom",
                 "base_frame": "base",
                 "publish_odom_tf": False,
@@ -247,6 +340,17 @@ def generate_launch_description():
                 "freq": 9.0,
             }
         ],
+        condition=UnlessCondition(use_odom_fusion),
+    )
+
+    odom_fusion_node = Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node_odom",
+        output="screen",
+        parameters=[odom_fusion_params_file],
+        remappings=[("odometry/filtered", "/odom")],
+        condition=IfCondition(use_odom_fusion),
     )
 
     wait_for_odom_to_lidar_tf = Node(
@@ -281,18 +385,36 @@ def generate_launch_description():
         ],
     )
 
-    slam_toolbox = Node(
+    mapping_slam_toolbox = Node(
         package="slam_toolbox",
-        executable="localization_slam_toolbox_node",
-        # async_slam_toolbox_node  localization_slam_toolbox_node
+        executable="async_slam_toolbox_node",
         name="slam_toolbox",
         output="screen",
         arguments=["--ros-args", "--log-level", "warn"],
         parameters=[
-            configured_slam_params,
+            configured_mapping_slam_params,
             {"use_sim_time": False},
         ],
         remappings=remappings,
+        condition=IfCondition(
+            PythonExpression(["'", slam_mode, "' == 'mapping'"])
+        ),
+    )
+
+    localization_slam_toolbox = Node(
+        package="slam_toolbox",
+        executable="localization_slam_toolbox_node",
+        name="slam_toolbox",
+        output="screen",
+        arguments=["--ros-args", "--log-level", "warn"],
+        parameters=[
+            configured_localization_slam_params,
+            {"use_sim_time": False},
+        ],
+        remappings=remappings,
+        condition=IfCondition(
+            PythonExpression(["'", slam_mode, "' == 'localization'"])
+        ),
     )
 
     nav2_lifecycle_nodes = [
@@ -315,15 +437,61 @@ def generate_launch_description():
         ],
     )
 
+    motion_executor_active_enabled = IfCondition(
+        PythonExpression(
+            [
+                "'",
+                enable_motion_executor,
+                "' == 'true' and '",
+                motion_executor_mode,
+                "' == 'active'",
+            ]
+        )
+    )
+    motion_executor_shadow_or_disabled = UnlessCondition(
+        PythonExpression(
+            [
+                "'",
+                enable_motion_executor,
+                "' == 'true' and '",
+                motion_executor_mode,
+                "' == 'active'",
+            ]
+        )
+    )
+
+    go2w_motion_executor = Node(
+        package="go2w_real",
+        executable="go2w_motion_executor.py",
+        name="go2w_motion_executor",
+        output="screen",
+        parameters=[
+            motion_executor_params_file,
+            {"executor_mode": motion_executor_mode},
+        ],
+        condition=IfCondition(enable_motion_executor),
+    )
+
     nav2_nodes = GroupAction(
         actions=[
             SetParameter("use_sim_time", False),
             Node(
                 package="nav2_controller",
                 executable="controller_server",
+                name="controller_server",
                 output="screen",
                 parameters=[configured_params],
                 remappings=remappings,
+                condition=motion_executor_shadow_or_disabled,
+            ),
+            Node(
+                package="nav2_controller",
+                executable="controller_server",
+                name="controller_server",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings + [("cmd_vel", "/nav2_cmd_vel_raw")],
+                condition=motion_executor_active_enabled,
             ),
             Node(
                 package="nav2_planner",
@@ -340,6 +508,16 @@ def generate_launch_description():
                 output="screen",
                 parameters=[configured_params],
                 remappings=remappings,
+                condition=motion_executor_shadow_or_disabled,
+            ),
+            Node(
+                package="nav2_recoveries",
+                executable="recoveries_server",
+                name="recoveries_server",
+                output="screen",
+                parameters=[configured_params],
+                remappings=remappings + [("cmd_vel", "/nav2_recovery_cmd_vel")],
+                condition=motion_executor_active_enabled,
             ),
             Node(
                 package="nav2_bt_navigator",
@@ -349,6 +527,7 @@ def generate_launch_description():
                 parameters=[configured_params],
                 remappings=remappings,
             ),
+            go2w_motion_executor,
             # Delay lifecycle_manager slightly so the lifecycle servers are
             # already discoverable when autostart kicks in. Without this,
             # Foxy occasionally leaves the whole Nav2 stack unconfigured.
@@ -369,9 +548,26 @@ def generate_launch_description():
         condition=IfCondition(use_rviz),
     )
 
+    frontier_explorer = TimerAction(
+        period=explorer_start_delay,
+        condition=IfCondition(start_explorer),
+        actions=[
+            Node(
+                package="go2w_real",
+                executable="frontier_explorer_cpp",
+                name="frontier_explorer",
+                output="screen",
+                parameters=[
+                    explorer_params_file,
+                    {"use_sim_time": False},
+                ],
+            ),
+        ],
+    )
+
     def launch_stack_after_tf_gate(event, _context):
         if event.returncode == 0:
-            return [slam_toolbox]
+            return [mapping_slam_toolbox, localization_slam_toolbox]
 
         return [
             LogInfo(
@@ -385,6 +581,7 @@ def generate_launch_description():
             return [
                 nav2_nodes,
                 rviz_node,
+                frontier_explorer,
             ]
 
         return [
@@ -395,15 +592,34 @@ def generate_launch_description():
         ]
 
     info = LogInfo(
-        msg="\n\n========================================\n"
-        "  GO2W Real Robot - RF2O SLAM + Nav2\n"
-        "  - RViz opens with the Nav2 layout and a 2D Goal Pose tool\n"
-        "  - Click '2D Goal Pose' in RViz, then drag to set goal position + yaw\n"
-        "  - Robot must already be standing before motion commands are sent\n"
-        "  - Odom is estimated from /scan by rf2o_laser_odometry\n"
-        "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
-        "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
-        "\n========================================\n"
+        msg=[
+            "\n\n========================================\n"
+            "  GO2W Real Robot - RF2O SLAM + Nav2\n"
+            "  - slam_mode: ",
+            slam_mode,
+            "\n"
+            "  - use_odom_fusion: ",
+            use_odom_fusion,
+            "\n"
+            "  - enable_motion_executor: ",
+            enable_motion_executor,
+            "\n"
+            "  - motion_executor_mode: ",
+            motion_executor_mode,
+            "\n"
+            "  - start_explorer: ",
+            start_explorer,
+            "\n"
+            "  - RViz opens with the Nav2 layout and a 2D Goal Pose tool\n"
+            "  - Click '2D Goal Pose' in RViz, then drag to set goal position + yaw\n"
+            "  - Robot must already be standing before motion commands are sent\n"
+            "  - /odom defaults to robot_localization EKF fused from "
+            "/sport_odom + /sport_imu\n"
+            "  - Set use_odom_fusion:=false to fall back to RF2O odom\n"
+            "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
+            "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
+            "\n========================================\n",
+        ]
     )
 
     return LaunchDescription(
@@ -414,7 +630,16 @@ def generate_launch_description():
             declare_cloud_topic,
             declare_lidar_yaw_offset,
             declare_rviz_software_rendering,
+            declare_slam_mode,
             declare_slam_map_file,
+            declare_angular_deadband,
+            declare_use_odom_fusion,
+            declare_odom_fusion_params_file,
+            declare_enable_motion_executor,
+            declare_motion_executor_mode,
+            declare_start_explorer,
+            declare_explorer_params_file,
+            declare_explorer_start_delay,
             rviz_software_gl,
             rviz_gl_version,
             robot_state_publisher,
@@ -425,6 +650,7 @@ def generate_launch_description():
             pointcloud_to_scan,
             scan_filter,
             rf2o_node,
+            odom_fusion_node,
             wait_for_odom_to_lidar_tf,
             wait_for_map_to_lidar_tf,
             RegisterEventHandler(

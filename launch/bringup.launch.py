@@ -24,6 +24,7 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
 
     network_interface = LaunchConfiguration("network_interface")
+    angular_deadband = LaunchConfiguration("angular_deadband")
     laser_filter_file = os.path.join(pkg_dir, "config", "laser_filter.yaml")
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
 
@@ -32,6 +33,13 @@ def generate_launch_description():
         "network_interface",
         default_value="eth0",
         description="Network interface connected to GO2W (e.g. eth0, enp2s0)",
+    )
+    declare_angular_deadband = DeclareLaunchArgument(
+        "angular_deadband",
+        default_value="0.1",
+        description=(
+            "Clamp cmd_vel angular.z to zero when its magnitude is below this threshold"
+        ),
     )
 
     # ===== 1. Robot State Publisher =====
@@ -63,6 +71,7 @@ def generate_launch_description():
         parameters=[
             {
                 "cmd_vel_timeout": 0.5,
+                "angular_deadband": angular_deadband,
                 "odom_frame": "odom",
                 "base_frame": "base",
                 "publish_odom_tf": True,
@@ -125,6 +134,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             declare_net_iface,
+            declare_angular_deadband,
             robot_state_publisher,
             go2w_bridge,
             pointcloud_to_scan,

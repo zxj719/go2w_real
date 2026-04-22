@@ -45,7 +45,14 @@ DEFAULT_RECONNECT_DELAY = 3.0
 DEFAULT_ABORT_WAIT_TIMEOUT = 5.0
 DEFAULT_PROGRESS_INTERVAL = 1.0
 DEFAULT_NAV_EVENT_TIMEOUT = 15.0
+# Remote execution tends to see brief Nav2 aborts in the real robot stack
+# (for example when costmaps/TF are still settling). Give the executor a
+# slightly larger retry budget than the local terminal helper so it does not
+# report a hard failure to the server too eagerly.
+DEFAULT_ABORT_REPLAN_RETRIES = 3
+DEFAULT_IGNORE_WAYPOINT_YAW = True
 DEFAULT_INSTANCE_LOCK_FILE = "/tmp/go2w_navigation_executor.lock"
+DEFAULT_PLANNER_ACTION_NAME = "/compute_path_to_pose"
 
 
 class ExecutorState(str, Enum):
@@ -71,6 +78,7 @@ class NavigationTask:
     last_progress_sent_at: float = 0.0
     accepted_at: float = 0.0
     last_nav_event_at: float = 0.0
+    nav_abort_retries_used: int = 0
 
 
 def _print_help():
@@ -85,6 +93,8 @@ def _print_help():
         f"  --heartbeat-interval SEC  Heartbeat interval, default: {DEFAULT_HEARTBEAT_INTERVAL:.1f}\n"
         f"  --reconnect-delay SEC     Reconnect delay after disconnect, default: {DEFAULT_RECONNECT_DELAY:.1f}\n"
         f"  --nav-event-timeout SEC   Max wait for Nav2 feedback/result after goal acceptance, default: {DEFAULT_NAV_EVENT_TIMEOUT:.1f}\n"
+        f"  --abort-replan-retries N  Retry after Nav2 abort if planner can still find a path, default: {DEFAULT_ABORT_REPLAN_RETRIES}\n"
+        "  --use-waypoint-yaw        Respect stored waypoint yaw instead of stopping on XY only\n"
         "  --list-pois               Print the loaded POI table and exit\n"
         "  -h, --help                Show this help message\n"
         "\n"
@@ -103,6 +113,8 @@ def _parse_cli_args(raw_args):
         "heartbeat_interval": DEFAULT_HEARTBEAT_INTERVAL,
         "reconnect_delay": DEFAULT_RECONNECT_DELAY,
         "nav_event_timeout": DEFAULT_NAV_EVENT_TIMEOUT,
+        "abort_replan_retries": DEFAULT_ABORT_REPLAN_RETRIES,
+        "ignore_waypoint_yaw": DEFAULT_IGNORE_WAYPOINT_YAW,
         "list_pois": False,
     }
     ros_args = []
@@ -170,6 +182,18 @@ def _parse_cli_args(raw_args):
             config["nav_event_timeout"] = float(arg.split("=", 1)[1])
             i += 1
             continue
+        if arg == "--abort-replan-retries" and i + 1 < len(raw_args):
+            config["abort_replan_retries"] = max(0, int(raw_args[i + 1]))
+            i += 2
+            continue
+        if arg.startswith("--abort-replan-retries="):
+            config["abort_replan_retries"] = max(0, int(arg.split("=", 1)[1]))
+            i += 1
+            continue
+        if arg == "--use-waypoint-yaw":
+            config["ignore_waypoint_yaw"] = False
+            i += 1
+            continue
         if arg == "--list-pois":
             config["list_pois"] = True
             i += 1
@@ -195,6 +219,43 @@ def _quaternion_from_yaw(yaw):
         "z": math.sin(half),
         "w": math.cos(half),
     }
+
+
+def _apply_waypoint_to_pose_stamped(
+    pose_stamped,
+    waypoint,
+    stamp,
+    ignore_waypoint_yaw=DEFAULT_IGNORE_WAYPOINT_YAW,
+):
+    pose_stamped.header.frame_id = waypoint["frame_id"]
+    pose_stamped.header.stamp = stamp
+    pose_stamped.pose.position.x = waypoint["position"]["x"]
+    pose_stamped.pose.position.y = waypoint["position"]["y"]
+    pose_stamped.pose.position.z = waypoint["position"]["z"]
+    if ignore_waypoint_yaw:
+        pose_stamped.pose.orientation.x = 0.0
+        pose_stamped.pose.orientation.y = 0.0
+        pose_stamped.pose.orientation.z = 0.0
+        pose_stamped.pose.orientation.w = 1.0
+    else:
+        pose_stamped.pose.orientation.x = waypoint["orientation"]["x"]
+        pose_stamped.pose.orientation.y = waypoint["orientation"]["y"]
+        pose_stamped.pose.orientation.z = waypoint["orientation"]["z"]
+        pose_stamped.pose.orientation.w = waypoint["orientation"]["w"]
+
+
+def _goal_status_label(status):
+    status = int(status)
+    labels = {
+        0: "unknown",
+        1: "accepted",
+        2: "executing",
+        3: "canceling",
+        4: "succeeded",
+        5: "canceled",
+        6: "aborted",
+    }
+    return labels.get(status, f"status_{status}")
 
 
 def _load_waypoints(path):
@@ -331,9 +392,11 @@ class Nav2ActionBridge:
         event_queue,
         action_name,
         server_timeout,
+        ignore_waypoint_yaw,
         ros_args,
     ):
         import rclpy
+        from nav2_msgs.action import ComputePathToPose
         from nav2_msgs.action import NavigateToPose
         from rclpy.action import ActionClient
         from rclpy.executors import MultiThreadedExecutor
@@ -342,6 +405,7 @@ class Nav2ActionBridge:
         self._loop = loop
         self._event_queue = event_queue
         self._server_timeout = server_timeout
+        self._ignore_waypoint_yaw = bool(ignore_waypoint_yaw)
         self._lock = threading.RLock()
         self._active_task = None
         self._active_goal_handle = None
@@ -349,9 +413,15 @@ class Nav2ActionBridge:
 
         rclpy.init(args=ros_args)
         self._rclpy = rclpy
+        self._compute_path_to_pose = ComputePathToPose
         self._navigate_to_pose = NavigateToPose
         self.node = Node("navigation_executor")
         self.client = ActionClient(self.node, NavigateToPose, action_name)
+        self.planner_client = ActionClient(
+            self.node,
+            ComputePathToPose,
+            DEFAULT_PLANNER_ACTION_NAME,
+        )
         self.executor = MultiThreadedExecutor(num_threads=2)
         self.executor.add_node(self.node)
         self._spin_thread = threading.Thread(
@@ -371,6 +441,8 @@ class Nav2ActionBridge:
                 self.executor.shutdown()
         with contextlib.suppress(Exception):
             self.client.destroy()
+        with contextlib.suppress(Exception):
+            self.planner_client.destroy()
         with contextlib.suppress(Exception):
             self.executor.remove_node(self.node)
         with contextlib.suppress(Exception):
@@ -449,15 +521,12 @@ class Nav2ActionBridge:
                 return False
 
         goal_msg = self._navigate_to_pose.Goal()
-        goal_msg.pose.header.frame_id = task.waypoint["frame_id"]
-        goal_msg.pose.header.stamp = self.node.get_clock().now().to_msg()
-        goal_msg.pose.pose.position.x = task.waypoint["position"]["x"]
-        goal_msg.pose.pose.position.y = task.waypoint["position"]["y"]
-        goal_msg.pose.pose.position.z = task.waypoint["position"]["z"]
-        goal_msg.pose.pose.orientation.x = task.waypoint["orientation"]["x"]
-        goal_msg.pose.pose.orientation.y = task.waypoint["orientation"]["y"]
-        goal_msg.pose.pose.orientation.z = task.waypoint["orientation"]["z"]
-        goal_msg.pose.pose.orientation.w = task.waypoint["orientation"]["w"]
+        _apply_waypoint_to_pose_stamped(
+            goal_msg.pose,
+            task.waypoint,
+            self.node.get_clock().now().to_msg(),
+            self._ignore_waypoint_yaw,
+        )
 
         future = self.client.send_goal_async(
             goal_msg,
@@ -664,9 +733,72 @@ class Nav2ActionBridge:
                 "token": token,
                 "request_id": task.request_id,
                 "sub_id": task.sub_id,
-                "error_message": f"Nav2 finished with status {result.status}",
+                "nav_status": int(result.status),
+                "error_message": (
+                    f"Nav2 finished with status {result.status} "
+                    f"({_goal_status_label(result.status)})"
+                ),
             }
         )
+
+    def planner_has_path(self, waypoint):
+        from action_msgs.msg import GoalStatus
+
+        if not self.planner_client.wait_for_server(timeout_sec=self._server_timeout):
+            raise RuntimeError(
+                "ComputePathToPose action server is not available within "
+                f"{self._server_timeout:.1f}s"
+            )
+
+        goal_msg = self._compute_path_to_pose.Goal()
+        _apply_waypoint_to_pose_stamped(
+            goal_msg.pose,
+            waypoint,
+            self.node.get_clock().now().to_msg(),
+            self._ignore_waypoint_yaw,
+        )
+        goal_msg.planner_id = "GridBased"
+
+        goal_handle = self._wait_for_future(
+            self.planner_client.send_goal_async(goal_msg),
+            self._server_timeout,
+            "ComputePathToPose goal response",
+        )
+        if goal_handle is None or not goal_handle.accepted:
+            return False
+
+        result = self._wait_for_future(
+            goal_handle.get_result_async(),
+            self._server_timeout,
+            "ComputePathToPose result",
+        )
+        if result.status != GoalStatus.STATUS_SUCCEEDED:
+            return False
+
+        path = getattr(result.result, "path", None)
+        poses = getattr(path, "poses", None)
+        return bool(poses)
+
+    def _wait_for_future(self, future, timeout_sec, label):
+        done = threading.Event()
+        outcome = {}
+
+        def _finish(completed_future):
+            try:
+                outcome["result"] = completed_future.result()
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        future.add_done_callback(_finish)
+        if not done.wait(timeout_sec):
+            raise TimeoutError(
+                f"Timed out waiting for {label} within {timeout_sec:.1f}s"
+            )
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome.get("result")
 
     def _clear_if_active(self, token):
         with self._lock:
@@ -706,6 +838,7 @@ class NavigationExecutor:
             self._bridge_event_queue,
             self.config["action_name"],
             self.config["server_timeout"],
+            self.config.get("ignore_waypoint_yaw", DEFAULT_IGNORE_WAYPOINT_YAW),
             self.ros_args,
         )
 
@@ -1045,6 +1178,8 @@ class NavigationExecutor:
             return
 
         if kind == "error":
+            if await self._maybe_retry_after_nav_abort(task, event):
+                return
             await self._send_error_event(
                 task.request_id,
                 task.sub_id,
@@ -1053,6 +1188,87 @@ class NavigationExecutor:
             self._complete_task(task, set_idle=False)
             self._set_state(ExecutorState.ERROR)
             return
+
+    async def _maybe_retry_after_nav_abort(self, task, event):
+        nav_status = int(event.get("nav_status", 0) or 0)
+        if _goal_status_label(nav_status) != "aborted":
+            return False
+        if task.abort_requested:
+            return False
+
+        max_retries = max(
+            0,
+            int(
+                self.config.get(
+                    "abort_replan_retries",
+                    DEFAULT_ABORT_REPLAN_RETRIES,
+                )
+            ),
+        )
+        if task.nav_abort_retries_used >= max_retries:
+            return False
+
+        next_attempt = task.nav_abort_retries_used + 1
+        print(
+            "[navigation_executor] Nav2 aborted; probing planner for a retryable "
+            f"path (attempt {next_attempt}/{max_retries})",
+            flush=True,
+        )
+
+        task.accepted_at = 0.0
+        task.last_nav_event_at = time.monotonic()
+        self._set_state(ExecutorState.STARTING)
+
+        try:
+            has_path = await self._run_blocking(
+                self._bridge.planner_has_path,
+                task.waypoint,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._send_error_event(
+                task.request_id,
+                task.sub_id,
+                f"Nav2 aborted and replanning probe failed: {exc}",
+            )
+            self._complete_task(task, set_idle=False)
+            self._set_state(ExecutorState.ERROR)
+            return True
+
+        if self.current_task is not task or task.abort_requested:
+            return True
+
+        if not has_path:
+            await self._send_error_event(
+                task.request_id,
+                task.sub_id,
+                "Nav2 aborted and planner could not find a path to the target",
+            )
+            self._complete_task(task, set_idle=False)
+            self._set_state(ExecutorState.ERROR)
+            return True
+
+        task.nav_abort_retries_used = next_attempt
+        print(
+            "[navigation_executor] planner still has a path; retrying current goal "
+            f"(attempt {next_attempt}/{max_retries})",
+            flush=True,
+        )
+
+        try:
+            await self._run_blocking(self._bridge.start_navigation, task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._send_error_event(
+                task.request_id,
+                task.sub_id,
+                f"failed to restart navigation after Nav2 abort: {exc}",
+            )
+            self._complete_task(task, set_idle=False)
+            self._set_state(ExecutorState.ERROR)
+        return True
 
     async def _watch_navigation_feedback(self, task, command_version):
         timeout = float(self.config["nav_event_timeout"])

@@ -20,6 +20,21 @@ Recommended unified launch:
 ros2 launch go2w_real slam_rf2o.launch.py
 ```
 
+This default launch keeps the motion-segmentation executor disabled, so Nav2
+publishes `/cmd_vel` directly to the bridge. Use this path first when you want
+to validate the baseline SLAM + localization + navigation stack in isolation.
+
+To enable the GO2W segmented motion executor explicitly:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py enable_motion_executor:=true
+```
+
+That command now starts the executor in `shadow` mode by default: the executor
+still computes its segmented commands, but baseline Nav2 keeps ownership of
+`/cmd_vel`. To let the executor actually take over robot motion, add
+`motion_executor_mode:=active`.
+
 This is the recommended path for:
 
 - manual map recording
@@ -103,6 +118,7 @@ ros_ws/src/
 Important files:
 
 - [`launch/slam_rf2o.launch.py`](launch/slam_rf2o.launch.py): unified RF2O + slam_toolbox + Nav2 launch
+- [`launch/auto_mapping.launch.py`](launch/auto_mapping.launch.py): single-command mapping + Nav2 + frontier explorer launch
 - [`rviz/nav2_real.rviz`](rviz/nav2_real.rviz): RViz layout with `2D Goal Pose`, map, costmaps, and plans
 - [`scripts/save_map_and_waypoints.py`](scripts/save_map_and_waypoints.py): fixed waypoint recorder
 - [`scripts/navigate_to_waypoint.py`](scripts/navigate_to_waypoint.py): terminal waypoint selector that sends goals to Nav2
@@ -143,6 +159,16 @@ source /home/unitree/unitree_ros2/setup.sh
 source install/setup.bash
 ```
 
+# 定位/导航，加载已有地图
+ros2 launch go2w_real slam_rf2o.launch.py \
+  slam_mode:=localization \
+  slam_map_file:=/home/unitree/ros_ws/src/map/zt_0
+
+# 从零建图
+ros2 launch go2w_real slam_rf2o.launch.py \
+  slam_mode:=mapping
+
+
 ### 3. Make sure the lidar is publishing
 
 ```bash
@@ -160,6 +186,8 @@ Expected input topic:
 ros2 launch go2w_real slam_rf2o.launch.py
 ```
 
+This starts the baseline Nav2 path by default without the GO2W motion executor.
+
 Optional overrides:
 
 ```bash
@@ -168,11 +196,36 @@ ros2 launch go2w_real slam_rf2o.launch.py \
   use_rviz:=true
 ```
 
+Enable segmented rotate/drive execution only when you want to test the GO2W
+motion-splitting path:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py \
+  enable_motion_executor:=true
+```
+
+To let the segmented executor own `/cmd_vel` instead of just shadowing:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py \
+  enable_motion_executor:=true \
+  motion_executor_mode:=active
+```
+
 Notes:
 
 - `network_interface` defaults to `eth0`, so you do not need to pass it in the normal case
 - only add `network_interface:=...` when your robot is connected through a different NIC
 - `slam_params.yaml` currently loads the serialized SLAM map prefix `/home/unitree/ros_ws/src/map/test_1`
+
+### 4b. Launch autonomous mapping from scratch
+
+```bash
+ros2 launch go2w_real auto_mapping.launch.py
+```
+
+This entrypoint switches `slam_toolbox` into fresh mapping mode and starts the
+frontier explorer automatically after Nav2 comes up.
 
 ### 5. Optional: inspect the saved waypoint table
 
@@ -229,16 +282,18 @@ ros2 run go2w_real save_map_and_waypoints.py
 
 Then:
 
-- use RViz `Publish Point` to click a point on the map
-- the script records the clicked position first
-- the script records the robot's current heading next
-- enter the point name in the terminal last
+- make sure localization is stable so `map -> base` TF is available
+- press `Enter` once to capture the robot's current pose
+- the script auto-assigns `id` values starting from `POI_013`
+- the script auto-assigns waypoint names like `wp_01`, `wp_02`, ...
 - repeat for all fixed points
-- press `Ctrl+C` when finished
+- enter `q` and press `Enter`, or press `Ctrl+C`, when finished
 
 The script will:
 
 - save waypoint metadata only
+- overwrite the `waypoints:` section on each run
+- preserve any existing `map:` metadata at the top of the YAML
 - write the YAML to `/home/unitree/ros_ws/src/go2w_waypoints.yaml` by default
 
 Generated files:
@@ -272,6 +327,7 @@ Then:
 - enter either the waypoint index, POI id, or waypoint name
 - the script sends that pose to Nav2
 - the terminal prints navigation feedback until the goal finishes
+- if Nav2 aborts but the planner can still produce a path, the script retries the same goal once by default
 - enter another waypoint, or `q` to quit
 
 Send one waypoint directly without the prompt:
@@ -285,6 +341,13 @@ If your waypoint YAML is stored elsewhere:
 ```bash
 ros2 run go2w_real navigate_to_waypoint.py \
   --waypoint-file /home/unitree/ros_ws/src/go2w_waypoints.yaml
+```
+
+Adjust the finite abort retry budget:
+
+```bash
+ros2 run go2w_real navigate_to_waypoint.py \
+  --abort-replan-retries 2
 ```
 
 ### 10. Run as the WebSocket navigation executor
@@ -327,6 +390,7 @@ Behavior summary:
 - numeric `target_id` values also match the waypoint index
 - a new `navigate_to` command preempts the current goal
 - `abort_navigation` pauses the current goal and leaves the executor ready for the next command
+- if Nav2 itself aborts, the executor probes `ComputePathToPose` once and retries automatically when a path still exists
 - heartbeat `ping` / `pong` and automatic reconnect are built in
 
 ### 11. CPU profiling for SLAM + Nav2
@@ -403,6 +467,13 @@ waypoints:
 ros2 launch go2w_real slam_rf2o.launch.py
 ```
 
+This is the baseline mode. Nav2 drives `/cmd_vel` directly, and the
+motion-segmentation executor stays off unless you opt in with:
+
+```bash
+ros2 launch go2w_real slam_rf2o.launch.py enable_motion_executor:=true
+```
+
 Use this when:
 
 - you want reliable real-world map building
@@ -455,6 +526,51 @@ This was observed in the tested setup. Topic names may appear, but usable odomet
 ```bash
 ros2 run go2w_real save_map_and_waypoints.py \
   --waypoint-file /home/unitree/ros_ws/src/my_waypoints.yaml
+```
+
+To overwrite the map-specific waypoint table used by the navigation preset:
+
+```bash
+ros2 run go2w_real save_map_and_waypoints.py \
+  --waypoint-file /home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml
+```
+
+## Motion Executor Modes
+
+Baseline Nav2 only:
+
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+source /home/unitree/unitree_ros2/setup.sh
+source install/setup.bash
+ros2 launch go2w_real slam_rf2o.launch.py
+```
+
+Shadow mode executor:
+
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+source /home/unitree/unitree_ros2/setup.sh
+source install/setup.bash
+ros2 launch go2w_real slam_rf2o.launch.py enable_motion_executor:=true motion_executor_mode:=shadow
+```
+
+Watch the executor's would-command output:
+
+```bash
+ros2 topic echo /go2w_motion_executor/shadow_cmd_vel
+```
+
+Active segmented executor:
+
+```bash
+cd ~/ros_ws
+source /opt/ros/foxy/setup.bash
+source /home/unitree/unitree_ros2/setup.sh
+source install/setup.bash
+ros2 launch go2w_real slam_rf2o.launch.py enable_motion_executor:=true motion_executor_mode:=active
 ```
 
 ## Repository Notes
