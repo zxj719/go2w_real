@@ -7,7 +7,7 @@ XT16_BIN="/unitree/module/unitree_slam/bin/xt16_driver"
 EXECUTOR_BIN="${WS_DIR}/install/go2w_real/lib/go2w_real/navigation_executor.py"
 EXECUTOR_LOCK_FILE="/tmp/go2w_navigation_executor.lock"
 DEFAULT_PRESET="zt_0"
-DEFAULT_SERVER_URI="ws://172.16.21.205:8101/ws/navigation/executor"
+DEFAULT_SERVER_URI="ws://192.168.123.186:8100/ws/navigation/executor"
 DEFAULT_NETWORK_INTERFACE="eth0"
 DEFAULT_SHOW_EXECUTOR_LOGS="1"
 NAV2_WAIT_TIMEOUT_SEC=120
@@ -110,7 +110,7 @@ Usage: start_navigation_headless.sh [zt_0|test_1] [options]
 
 Starts the full headless navigation stack:
   1. xt16_driver
-  2. ros2 launch go2w_real slam_rf2o.launch.py use_rviz:=false ...
+  2. ros2 launch go2w_real slam_rf2o.launch.py slam_mode:=localization use_odom_fusion:=true use_rviz:=false ...
   3. ros2 run go2w_real navigation_executor.py ...
 
 Map presets:
@@ -122,6 +122,7 @@ Options:
   --slam-map-file PREFIX   Serialized slam_toolbox map prefix
   --waypoint-file PATH     Waypoint YAML file used by navigation_executor.py
   --server-uri URI         WebSocket server URI for navigation_executor.py
+                           default: ws://192.168.123.186:8100/ws/navigation/executor
   --network-interface IF   Interface passed to slam_rf2o.launch.py
   --server-timeout SEC     Passed to navigation_executor.py
   --heartbeat-interval SEC Passed to navigation_executor.py
@@ -294,6 +295,12 @@ fi
 
 apply_preset_defaults "${PRESET}"
 
+if [[ -z "${NETWORK_INTERFACE}" ]]; then
+  echo "[start_nav_headless] missing required network interface after override resolution" >&2
+  print_help >&2
+  exit 1
+fi
+
 if [[ -z "${WAYPOINT_FILE}" || -z "${SLAM_MAP_PREFIX}" || -z "${SERVER_URI}" || -z "${NETWORK_INTERFACE}" ]]; then
   echo "[start_nav_headless] missing required runtime parameter after preset/override resolution" >&2
   print_help >&2
@@ -378,6 +385,8 @@ fi
 
 LAUNCH_CMD=(
   ros2 launch go2w_real slam_rf2o.launch.py
+  slam_mode:=localization
+  use_odom_fusion:=true
   use_rviz:=false
   network_interface:="${NETWORK_INTERFACE}"
   slam_map_file:="${SLAM_MAP_PREFIX}"

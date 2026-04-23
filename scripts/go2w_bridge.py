@@ -327,7 +327,7 @@ def main(args=None):
         # Parameters (for logging; net_iface already parsed above)
         node.declare_parameter("network_interface", net_iface)
         node.declare_parameter("cmd_vel_timeout", 0.5)
-        node.declare_parameter("angular_deadband", 0.1)
+        node.declare_parameter("angular_deadband", 0.12)
         node.declare_parameter("odom_frame", "odom")
         node.declare_parameter("base_frame", "base")
         node.declare_parameter("publish_odom_tf", True)

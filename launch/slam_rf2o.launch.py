@@ -155,7 +155,7 @@ def generate_launch_description():
     )
     declare_angular_deadband = DeclareLaunchArgument(
         "angular_deadband",
-        default_value="0.1",
+        default_value="0.12",
         description=(
             "Clamp cmd_vel angular.z to zero when its magnitude is below this threshold"
         ),

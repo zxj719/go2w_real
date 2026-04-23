@@ -3,7 +3,7 @@ map:
   data: '/home/unitree/ros_ws/src/map/zt_0.data'
   posegraph: '/home/unitree/ros_ws/src/map/zt_0.posegraph'
 waypoints:
-  - id: 'POI_013'
+  - id: 'POI_012'
     name: 'wp_00'
     frame_id: 'map'
     position:

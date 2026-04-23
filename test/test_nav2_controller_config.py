@@ -12,8 +12,10 @@ def test_baseline_nav2_dwb_controller_targets():
         (REPO_ROOT / "src/go2w_real/config/nav2_params_foxy.yaml").read_text()
     )
 
-    goal_checker = nav2_cfg["controller_server"]["ros__parameters"][
-        "general_goal_checker"
+    controller_params = nav2_cfg["controller_server"]["ros__parameters"]
+    goal_checker = controller_params["general_goal_checker"]
+    progress_checker = nav2_cfg["controller_server"]["ros__parameters"][
+        "progress_checker"
     ]
     follow_path = nav2_cfg["controller_server"]["ros__parameters"]["FollowPath"]
 
@@ -23,11 +25,23 @@ def test_baseline_nav2_dwb_controller_targets():
     assert math.isclose(
         goal_checker["yaw_goal_tolerance"], 3.14, rel_tol=0.0, abs_tol=1e-6
     )
+    assert math.isclose(
+        progress_checker["required_movement_radius"],
+        0.05,
+        rel_tol=0.0,
+        abs_tol=1e-6,
+    )
+    assert math.isclose(
+        progress_checker["movement_time_allowance"],
+        20.0,
+        rel_tol=0.0,
+        abs_tol=1e-6,
+    )
     assert follow_path["plugin"] == "dwb_core::DWBLocalPlanner"
     assert math.isclose(follow_path["max_vel_x"], 0.75, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(follow_path["max_speed_xy"], 0.75, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(
-        follow_path["max_vel_theta"], 0.50, rel_tol=0.0, abs_tol=1e-6
+        follow_path["max_vel_theta"], 0.75, rel_tol=0.0, abs_tol=1e-6
     )
     assert math.isclose(follow_path["acc_lim_theta"], 1.5, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(follow_path["decel_lim_theta"], -1.5, rel_tol=0.0, abs_tol=1e-6)
@@ -45,6 +59,32 @@ def test_baseline_nav2_dwb_controller_targets():
     )
     assert math.isclose(
         follow_path["transform_tolerance"], 2.0, rel_tol=0.0, abs_tol=1e-6
+    )
+    assert controller_params["goal_checker_plugin"] == "goal_checker"
+
+
+def test_foxy_goal_checker_alias_matches_unified_goal_tolerances():
+    nav2_cfg = yaml.safe_load(
+        (REPO_ROOT / "src/go2w_real/config/nav2_params_foxy.yaml").read_text()
+    )
+
+    controller_params = nav2_cfg["controller_server"]["ros__parameters"]
+    unified_goal_checker = controller_params["general_goal_checker"]
+    foxy_goal_checker = controller_params["goal_checker"]
+
+    assert foxy_goal_checker["plugin"] == "nav2_controller::SimpleGoalChecker"
+    assert foxy_goal_checker["stateful"] is True
+    assert math.isclose(
+        foxy_goal_checker["xy_goal_tolerance"],
+        unified_goal_checker["xy_goal_tolerance"],
+        rel_tol=0.0,
+        abs_tol=1e-6,
+    )
+    assert math.isclose(
+        foxy_goal_checker["yaw_goal_tolerance"],
+        unified_goal_checker["yaw_goal_tolerance"],
+        rel_tol=0.0,
+        abs_tol=1e-6,
     )
 
 
@@ -92,6 +132,12 @@ def test_planner_tolerance_matches_goal_checker_xy_tolerance():
     assert math.isclose(
         nav2_cfg["recoveries_server"]["ros__parameters"]["transform_tolerance"],
         2.0,
+        rel_tol=0.0,
+        abs_tol=1e-6,
+    )
+    assert math.isclose(
+        nav2_cfg["recoveries_server"]["ros__parameters"]["max_rotational_vel"],
+        0.75,
         rel_tol=0.0,
         abs_tol=1e-6,
     )

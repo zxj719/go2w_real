@@ -20,7 +20,7 @@ go2w_motion_executor:
     rotate_exit_threshold: 0.0698132
     k_yaw: 1.2
     min_rotate_speed: 0.18
-    max_rotate_speed: 0.45
+    max_rotate_speed: 0.75
     drive_speed: 0.22
     slowdown_distance: 0.50
     segment_arrival_distance: 0.12

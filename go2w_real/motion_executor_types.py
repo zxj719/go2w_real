@@ -55,7 +55,7 @@ class MotionExecutorParams:
     rotate_exit_threshold: float = 0.0698132
     k_yaw: float = 1.2
     min_rotate_speed: float = 0.18
-    max_rotate_speed: float = 0.45
+    max_rotate_speed: float = 0.75
     drive_speed: float = 0.22
     slowdown_distance: float = 0.50
     segment_arrival_distance: float = 0.12

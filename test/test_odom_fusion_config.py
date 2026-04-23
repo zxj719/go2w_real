@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
 import yaml
@@ -10,9 +11,14 @@ PACKAGE_ROOT = REPO_ROOT / "src/go2w_real"
 
 def test_launch_defaults_to_robot_localization_odom_fusion():
     launch_text = (PACKAGE_ROOT / "launch/slam_rf2o.launch.py").read_text()
+    match = re.search(
+        r'DeclareLaunchArgument\(\s*"use_odom_fusion",(?P<body>.*?)\n\s*\)',
+        launch_text,
+        re.DOTALL,
+    )
 
-    assert 'DeclareLaunchArgument(\n        "use_odom_fusion"' in launch_text
-    assert 'default_value="true"' in launch_text
+    assert match is not None
+    assert 'default_value="true"' in match.group("body")
     assert "robot_localization" in launch_text
     assert 'executable="ekf_node"' in launch_text
     assert '("odometry/filtered", "/odom")' in launch_text
@@ -79,3 +85,9 @@ def test_cmakelists_registers_odom_fusion_pytest():
     cmake_text = (PACKAGE_ROOT / "CMakeLists.txt").read_text()
 
     assert "test_odom_fusion_config" in cmake_text
+
+
+def test_headless_start_script_prefers_odom_fusion():
+    script_text = (PACKAGE_ROOT / "scripts/start_navigation_headless.sh").read_text()
+
+    assert "use_odom_fusion:=true" in script_text

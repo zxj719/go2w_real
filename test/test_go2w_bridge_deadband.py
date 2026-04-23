@@ -36,7 +36,7 @@ def test_apply_angular_deadband_is_disabled_when_threshold_is_zero():
     assert bridge.apply_angular_deadband(-0.01, -1.0) == -0.01
 
 
-def test_bridge_script_defaults_angular_deadband_to_01():
+def test_bridge_script_defaults_angular_deadband_to_012():
     bridge_source = BRIDGE_PATH.read_text()
 
-    assert 'node.declare_parameter("angular_deadband", 0.1)' in bridge_source
+    assert 'node.declare_parameter("angular_deadband", 0.12)' in bridge_source

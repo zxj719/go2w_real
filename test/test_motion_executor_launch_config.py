@@ -83,10 +83,10 @@ def test_launch_exposes_bridge_angular_deadband_argument():
     ).read_text()
 
     assert 'DeclareLaunchArgument(\n        "angular_deadband"' in slam_launch_text
-    assert 'default_value="0.1"' in slam_launch_text
+    assert 'default_value="0.12"' in slam_launch_text
     assert '"angular_deadband": angular_deadband' in slam_launch_text
     assert 'DeclareLaunchArgument(\n        "angular_deadband"' in bringup_launch_text
-    assert 'default_value="0.1"' in bringup_launch_text
+    assert 'default_value="0.12"' in bringup_launch_text
     assert '"angular_deadband": angular_deadband' in bringup_launch_text
 
 
