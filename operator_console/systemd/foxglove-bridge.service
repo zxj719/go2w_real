@@ -1,0 +1,19 @@
+[Unit]
+Description=Foxglove Bridge for ROS 2 Foxy (GO2W)
+Documentation=https://docs.foxglove.dev/docs/visualization/ros-foxglove-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=unitree
+Group=unitree
+Environment=ROS_DOMAIN_ID=0
+ExecStart=/bin/bash -lc "source /opt/ros/foxy/setup.bash && if [ -f /home/unitree/unitree_ros2/setup.sh ]; then source /home/unitree/unitree_ros2/setup.sh; fi && ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765"
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

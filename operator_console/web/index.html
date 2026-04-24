@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GO2W Navigation Console</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-hi: #222636;
+  --border: #2a2d3a;
+  --text: #e4e4e7;
+  --text-dim: #8b8d98;
+  --green: #22c55e;
+  --green-dim: #166534;
+  --red: #ef4444;
+  --red-dim: #7f1d1d;
+  --blue: #3b82f6;
+  --blue-dim: #1e3a8a;
+  --yellow: #eab308;
+  --radius: 8px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Status */
+.status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--text-dim); flex-shrink: 0;
+}
+.status-dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.starting { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+.status-dot.stopping { background: var(--yellow); }
+.status-dot.stopped { background: var(--text-dim); }
+.status-dot.succeeded { background: var(--green); }
+.status-dot.failed { background: var(--red); }
+.status-dot.canceled { background: var(--text-dim); }
+.status-dot.idle { background: var(--text-dim); }
+.status-text { font-size: 16px; font-weight: 500; }
+.status-detail { font-size: 13px; color: var(--text-dim); }
+
+/* Profile selector */
+.profile-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 15px;
+  margin-bottom: 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.profile-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+/* Buttons */
+.btn-row { display: flex; gap: 10px; }
+.btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.btn:active { opacity: 0.7; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-start { background: var(--green-dim); color: var(--green); }
+.btn-stop { background: var(--red-dim); color: var(--red); }
+.btn-cancel { background: var(--red-dim); color: var(--red); }
+
+/* POI picker */
+.poi-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.poi-btn {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.poi-btn:active { opacity: 0.7; }
+.poi-btn.active { border-color: var(--blue); background: var(--blue-dim); }
+.poi-btn-id { font-weight: 600; }
+.poi-btn-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.poi-empty { font-size: 13px; color: var(--text-dim); padding: 8px 0; }
+
+/* Logs */
+.log-area {
+  background: #000;
+  border-radius: var(--radius);
+  padding: 10px;
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 240px;
+  overflow-y: auto;
+  color: #a0a0a0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Links */
+.link-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.link-btn {
+  flex: 1; min-width: 140px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--blue);
+  text-decoration: none;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+.link-btn:active { opacity: 0.7; }
+
+/* Health */
+.health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.health-item { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+
+/* Refresh icon */
+.refresh-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.refresh-btn:active { color: var(--text); }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 20px;
+  font-size: 14px;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  max-width: 90vw;
+  text-align: center;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<h1>GO2W Navigation Console</h1>
+
+<!-- Stack Status -->
+<div class="card">
+  <div class="card-title">Stack Status</div>
+  <div class="status-row">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-text" id="statusText">--</span>
+  </div>
+  <div class="status-detail" id="statusDetail"></div>
+</div>
+
+<!-- Control: start / stop the navigation stack -->
+<div class="card">
+  <div class="card-title">Profile</div>
+  <select class="profile-select" id="profileSelect">
+    <option value="">Loading...</option>
+  </select>
+  <div class="profile-desc" id="profileDesc"></div>
+  <div class="btn-row">
+    <button class="btn btn-start" id="btnStart" disabled>Start</button>
+    <button class="btn btn-stop" id="btnStop" disabled>Stop</button>
+  </div>
+</div>
+
+<!-- POI dispatch -->
+<div class="card">
+  <div class="card-title">
+    <span>Navigate to POI</span>
+    <button class="refresh-btn" id="btnRefreshPOIs">↻ refresh</button>
+  </div>
+  <div class="status-row">
+    <div class="status-dot idle" id="navDot"></div>
+    <span class="status-text" id="navText">Idle</span>
+  </div>
+  <div class="status-detail" id="navDetail" style="margin-bottom: 12px;"></div>
+  <div class="poi-list" id="poiList">
+    <div class="poi-empty">Loading POIs…</div>
+  </div>
+  <div style="margin-top: 12px;">
+    <button class="btn btn-cancel" id="btnCancelNav" disabled>Cancel navigation</button>
+  </div>
+</div>
+
+<!-- Stack logs -->
+<div class="card">
+  <div class="card-title">Stack Logs</div>
+  <div class="log-area" id="logArea">No logs yet.</div>
+</div>
+
+<!-- Nav logs -->
+<div class="card">
+  <div class="card-title">Navigation Logs</div>
+  <div class="log-area" id="navLogArea">No logs yet.</div>
+</div>
+
+<!-- Quick Links -->
+<div class="card">
+  <div class="card-title">Visualization</div>
+  <div class="link-row">
+    <a class="link-btn" id="foxgloveLink" href="#" target="_blank">Foxglove Web</a>
+  </div>
+</div>
+
+<!-- Health -->
+<div class="card">
+  <div class="card-title">Services</div>
+  <div class="health-grid" id="healthGrid">--</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+  "use strict";
+
+  // --- Config ---
+  var API = window.location.origin;
+  var FOXGLOVE_PORT = 8765;
+  var POLL_MS = 2000;
+  var LOG_POLL_MS = 3000;
+  var NAV_POLL_MS = 1000;
+
+  // --- DOM refs ---
+  var statusDot = document.getElementById("statusDot");
+  var statusText = document.getElementById("statusText");
+  var statusDetail = document.getElementById("statusDetail");
+  var profileSelect = document.getElementById("profileSelect");
+  var profileDesc = document.getElementById("profileDesc");
+  var btnStart = document.getElementById("btnStart");
+  var btnStop = document.getElementById("btnStop");
+  var btnRefreshPOIs = document.getElementById("btnRefreshPOIs");
+  var btnCancelNav = document.getElementById("btnCancelNav");
+  var poiList = document.getElementById("poiList");
+  var navDot = document.getElementById("navDot");
+  var navText = document.getElementById("navText");
+  var navDetail = document.getElementById("navDetail");
+  var logArea = document.getElementById("logArea");
+  var navLogArea = document.getElementById("navLogArea");
+  var foxgloveLink = document.getElementById("foxgloveLink");
+  var healthGrid = document.getElementById("healthGrid");
+  var toast = document.getElementById("toast");
+
+  // --- State ---
+  var profiles = [];
+  var currentProfile = "";
+  var activeTargetId = null;
+
+  // --- Foxglove link ---
+  var robotHost = window.location.hostname;
+  var foxgloveUrl = "https://app.foxglove.dev/~/view?ds=foxglove-websocket&ds.url=ws://"
+    + robotHost + ":" + FOXGLOVE_PORT;
+  foxgloveLink.href = foxgloveUrl;
+
+  // --- Toast ---
+  var toastTimer = null;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { toast.classList.remove("show"); }, 3000);
+  }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: {} };
+    if (body) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    return fetch(API + path, opts).then(function(r) { return r.json(); });
+  }
+
+  // --- Profiles (navigation stack) -----------------------------------------
+
+  function loadProfiles() {
+    api("GET", "/api/profiles").then(function(data) {
+      profiles = data.profiles || [];
+      profileSelect.innerHTML = "";
+      profiles.forEach(function(p) {
+        var opt = document.createElement("option");
+        opt.value = p.name;
+        opt.textContent = p.name;
+        profileSelect.appendChild(opt);
+      });
+      if (profiles.length > 0) {
+        currentProfile = profiles[0].name;
+        profileSelect.value = currentProfile;
+        updateProfileDesc();
+        btnStart.disabled = false;
+        btnStop.disabled = false;
+      }
+    }).catch(function() {
+      profileSelect.innerHTML = '<option value="">Connection failed</option>';
+    });
+  }
+
+  function updateProfileDesc() {
+    var p = profiles.find(function(x) { return x.name === currentProfile; });
+    profileDesc.textContent = p ? p.description : "";
+  }
+
+  profileSelect.addEventListener("change", function() {
+    currentProfile = this.value;
+    updateProfileDesc();
+    pollStatus();
+    pollStackLogs();
+  });
+
+  btnStart.addEventListener("click", function() {
+    if (!currentProfile) return;
+    btnStart.disabled = true;
+    api("POST", "/api/profiles/" + currentProfile + "/start").then(function(r) {
+      if (r.ok) {
+        showToast("Started " + currentProfile);
+      } else {
+        showToast(r.error || "Start failed");
+      }
+      pollStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    }).finally(function() {
+      btnStart.disabled = false;
+    });
+  });
+
+  btnStop.addEventListener("click", function() {
+    if (!currentProfile) return;
+    btnStop.disabled = true;
+    showToast("Stopping " + currentProfile + "...");
+    api("POST", "/api/profiles/" + currentProfile + "/stop").then(function(r) {
+      if (r.ok) {
+        showToast("Stopped " + currentProfile);
+      } else {
+        showToast(r.error || "Stop failed");
+      }
+      pollStatus();
+      pollNavStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    }).finally(function() {
+      btnStop.disabled = false;
+    });
+  });
+
+  // --- Stack status + logs --------------------------------------------------
+
+  function pollStatus() {
+    if (!currentProfile) return;
+    api("GET", "/api/profiles/" + currentProfile + "/status").then(function(s) {
+      var state = s.state || "stopped";
+      statusDot.className = "status-dot " + state;
+      statusText.textContent = capitalize(state);
+
+      var details = [];
+      if (s.pid) details.push("PID " + s.pid);
+      if (s.uptime_seconds != null) details.push(formatUptime(s.uptime_seconds));
+      if (s.exit_code != null && state === "stopped") details.push("exit " + s.exit_code);
+      statusDetail.textContent = details.join("  |  ");
+    }).catch(function() {
+      statusDot.className = "status-dot";
+      statusText.textContent = "Disconnected";
+      statusDetail.textContent = "";
+    });
+  }
+
+  function pollStackLogs() {
+    if (!currentProfile) return;
+    api("GET", "/api/profiles/" + currentProfile + "/logs?tail=80").then(function(data) {
+      var lines = data.lines || [];
+      logArea.textContent = lines.length ? lines.join("\n") : "No logs yet.";
+      logArea.scrollTop = logArea.scrollHeight;
+    }).catch(function() {});
+  }
+
+  // --- POIs + navigation ----------------------------------------------------
+
+  function renderPOIs(waypoints) {
+    if (!waypoints || waypoints.length === 0) {
+      poiList.innerHTML = '<div class="poi-empty">No POIs loaded. Check waypoint file on the robot.</div>';
+      return;
+    }
+    poiList.innerHTML = "";
+    waypoints.forEach(function(wp) {
+      var btn = document.createElement("button");
+      btn.className = "poi-btn";
+      btn.dataset.id = wp.id;
+      if (activeTargetId && wp.id === activeTargetId) btn.classList.add("active");
+
+      var idEl = document.createElement("div");
+      idEl.className = "poi-btn-id";
+      idEl.textContent = wp.id;
+      btn.appendChild(idEl);
+
+      var metaEl = document.createElement("div");
+      metaEl.className = "poi-btn-meta";
+      metaEl.textContent = wp.name + "  ·  x=" + wp.x.toFixed(2) + " y=" + wp.y.toFixed(2);
+      btn.appendChild(metaEl);
+
+      btn.addEventListener("click", function() {
+        triggerNavigate(wp.id);
+      });
+
+      poiList.appendChild(btn);
+    });
+  }
+
+  function loadPOIs() {
+    api("GET", "/api/waypoints").then(function(data) {
+      if (!data.ok) {
+        poiList.innerHTML = '<div class="poi-empty">' + (data.error || "Failed to load POIs.") + '</div>';
+        return;
+      }
+      renderPOIs(data.waypoints || []);
+    }).catch(function() {
+      poiList.innerHTML = '<div class="poi-empty">Connection failed while loading POIs.</div>';
+    });
+  }
+
+  function triggerNavigate(targetId) {
+    showToast("Dispatching navigation to " + targetId + "…");
+    api("POST", "/api/nav/goto", { target_id: targetId }).then(function(r) {
+      if (r.ok) {
+        activeTargetId = targetId;
+        highlightActivePOI();
+        showToast("Navigating to " + targetId);
+      } else {
+        showToast(r.error || "Dispatch failed");
+      }
+      pollNavStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    });
+  }
+
+  function highlightActivePOI() {
+    var buttons = poiList.querySelectorAll(".poi-btn");
+    buttons.forEach(function(b) {
+      if (b.dataset.id === activeTargetId) {
+        b.classList.add("active");
+      } else {
+        b.classList.remove("active");
+      }
+    });
+  }
+
+  btnRefreshPOIs.addEventListener("click", loadPOIs);
+
+  btnCancelNav.addEventListener("click", function() {
+    btnCancelNav.disabled = true;
+    api("POST", "/api/nav/cancel").then(function(r) {
+      showToast(r.message || "Cancel requested");
+      pollNavStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    });
+  });
+
+  function pollNavStatus() {
+    api("GET", "/api/nav/status").then(function(s) {
+      var state = s.state || "idle";
+      navDot.className = "status-dot " + state;
+      navText.textContent = capitalize(state) +
+        (s.target_id ? "  ·  " + s.target_id : "");
+
+      var details = [];
+      if (s.remaining_distance != null) {
+        details.push("dist=" + Number(s.remaining_distance).toFixed(2) + " m");
+      }
+      if (s.uptime_seconds != null) details.push(formatUptime(s.uptime_seconds));
+      if (s.exit_code != null && state !== "running" && state !== "starting") {
+        details.push("exit " + s.exit_code);
+      }
+      if (s.error) details.push(s.error);
+      navDetail.textContent = details.join("  |  ");
+
+      if (state === "running" || state === "starting") {
+        btnCancelNav.disabled = false;
+        activeTargetId = s.target_id || activeTargetId;
+      } else {
+        btnCancelNav.disabled = true;
+        if (state === "succeeded" || state === "failed" || state === "canceled" || state === "idle") {
+          if (state !== "running") activeTargetId = null;
+        }
+      }
+      highlightActivePOI();
+    }).catch(function() {
+      navDot.className = "status-dot";
+      navText.textContent = "Disconnected";
+      navDetail.textContent = "";
+      btnCancelNav.disabled = true;
+    });
+  }
+
+  function pollNavLogs() {
+    api("GET", "/api/nav/logs?tail=60").then(function(data) {
+      var lines = data.lines || [];
+      navLogArea.textContent = lines.length ? lines.join("\n") : "No logs yet.";
+      navLogArea.scrollTop = navLogArea.scrollHeight;
+    }).catch(function() {});
+  }
+
+  // --- Health --------------------------------------------------------------
+
+  function pollHealth() {
+    api("GET", "/api/health").then(function(data) {
+      var services = data.services || {};
+      var html = "";
+      Object.keys(services).forEach(function(name) {
+        var state = services[name];
+        var dotClass = state === "running" ? "running"
+          : state === "starting" ? "starting"
+          : state === "stopping" ? "stopping"
+          : state;
+        html += '<div class="health-item">'
+          + '<div class="status-dot ' + dotClass + '" style="width:8px;height:8px;"></div>'
+          + '<span>' + name + '</span>'
+          + '</div>';
+      });
+      healthGrid.innerHTML = html || "--";
+    }).catch(function() {
+      healthGrid.innerHTML = '<div class="health-item">Disconnected</div>';
+    });
+  }
+
+  // --- Utilities -----------------------------------------------------------
+
+  function capitalize(s) {
+    if (!s) return "";
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  function formatUptime(sec) {
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = Math.floor(sec % 60);
+    if (h > 0) return h + "h " + m + "m";
+    if (m > 0) return m + "m " + s + "s";
+    return s + "s";
+  }
+
+  // --- Init ----------------------------------------------------------------
+
+  loadProfiles();
+  loadPOIs();
+
+  setInterval(function() {
+    pollStatus();
+    pollHealth();
+  }, POLL_MS);
+
+  setInterval(pollStackLogs, LOG_POLL_MS);
+  setInterval(pollNavStatus, NAV_POLL_MS);
+  setInterval(pollNavLogs, LOG_POLL_MS);
+
+  setTimeout(function() {
+    pollStatus();
+    pollHealth();
+    pollStackLogs();
+    pollNavStatus();
+    pollNavLogs();
+  }, 500);
+})();
+</script>
+</body>
+</html>

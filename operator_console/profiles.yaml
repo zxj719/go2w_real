@@ -1,0 +1,48 @@
+# GO2W Navigation Launch Manager — profile whitelist
+#
+# Each profile defines a shell command that launch_manager is allowed to
+# execute (via bash -lc). The manager will NOT run any command outside this
+# list.
+#
+# Top-level keys:
+#   navigation:
+#     waypoint_file:  Default waypoint YAML for POI dispatch. Used by the
+#                     `/api/waypoints` list and by navigate_to_waypoint.py
+#                     (via GO2W_WAYPOINT_FILE env) when the UI triggers a POI.
+#     navigate_command: Template command the manager runs per POI click.
+#                       The substring {{waypoint}} is replaced with the
+#                       selected POI id.
+#
+# Each entry under `profiles`:
+#   command:      exact shell command to run
+#   description:  shown in the phone control panel UI
+#   env:          additional environment variables (merged with system env)
+
+navigation:
+  waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml
+  navigate_command: >
+    source /opt/ros/foxy/setup.bash &&
+    if [ -f /home/unitree/unitree_ros2/setup.sh ]; then source /home/unitree/unitree_ros2/setup.sh; fi &&
+    source /home/unitree/ros_ws/install/setup.bash &&
+    exec ros2 run go2w_real navigate_to_waypoint.py
+    --waypoint-file "$GO2W_WAYPOINT_FILE"
+    --waypoint "{{waypoint}}"
+
+profiles:
+  navigation:
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_no_server.sh
+    description: >
+      GO2W headless navigation stack (xt16_driver + slam_rf2o localization +
+      Nav2). No outbound WebSocket server executor. POI goals are dispatched
+      by the operator_console on demand.
+    env:
+      ROS_DOMAIN_ID: "0"
+
+  navigation_test_map:
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_no_server.sh test_1
+    description: >
+      Same stack but using the `test_1` map preset (see
+      go2w_waypoints.yaml). Remember to set the UI waypoint file to
+      go2w_waypoints.yaml if you switch to this profile.
+    env:
+      ROS_DOMAIN_ID: "0"

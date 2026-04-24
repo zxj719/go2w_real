@@ -91,6 +91,7 @@ foreach(script IN ITEMS
   scripts/pointcloud_relay.py
   scripts/save_map_and_waypoints.py
   scripts/start_navigation_headless.sh
+  scripts/start_navigation_no_server.sh
   scripts/wait_for_transform.py
 )
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${script}")
