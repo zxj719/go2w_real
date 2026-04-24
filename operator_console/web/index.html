@@ -31,8 +31,52 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  padding: 16px;
+  padding: 16px 16px 112px 16px; /* reserve space for the sticky E-STOP bar */
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Sticky emergency-stop bar — always on screen, full-width */
+.estop-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, rgba(15,17,23,0.4) 0%, rgba(15,17,23,0.95) 60%);
+  z-index: 200;
+  pointer-events: none;
+}
+.estop-btn {
+  pointer-events: auto;
+  display: block;
+  width: 100%;
+  padding: 18px 16px;
+  border: 2px solid #f87171;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(239,68,68,0.35);
+  transition: opacity 0.1s, transform 0.05s;
+}
+.estop-btn:active { transform: scale(0.98); opacity: 0.9; }
+.estop-btn.busy { opacity: 0.6; }
+.estop-btn-sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  margin-top: 4px;
+  opacity: 0.8;
+}
+.estop-detail {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  pointer-events: auto;
 }
 
 h1 {
@@ -285,6 +329,14 @@ h1 {
   <div class="health-grid" id="healthGrid">--</div>
 </div>
 
+<div class="estop-bar">
+  <button class="estop-btn" id="btnEstop" type="button">
+    Emergency Stop
+    <span class="estop-btn-sub">cancel nav2 goal · halt /cmd_vel</span>
+  </button>
+  <div class="estop-detail" id="estopDetail"></div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -317,6 +369,8 @@ h1 {
   var foxgloveLink = document.getElementById("foxgloveLink");
   var healthGrid = document.getElementById("healthGrid");
   var toast = document.getElementById("toast");
+  var btnEstop = document.getElementById("btnEstop");
+  var estopDetail = document.getElementById("estopDetail");
 
   // --- State ---
   var profiles = [];
@@ -532,6 +586,32 @@ h1 {
     });
   });
 
+  // --- Emergency stop -----------------------------------------------------
+
+  btnEstop.addEventListener("click", function() {
+    if (btnEstop.classList.contains("busy")) return;
+    btnEstop.classList.add("busy");
+    btnEstop.textContent = "STOPPING…";
+    showToast("Emergency stop sent");
+    api("POST", "/api/nav/estop").then(function(r) {
+      if (r.ok) {
+        showToast(
+          "E-STOP ok · killed=" + (r.killed_process ? "yes" : "no") +
+          " · " + (r.elapsed_seconds != null ? r.elapsed_seconds + "s" : "")
+        );
+      } else {
+        showToast("E-STOP: " + (r.error || "failed"));
+      }
+      pollNavStatus();
+    }).catch(function() {
+      showToast("E-STOP: connection failed");
+    }).finally(function() {
+      btnEstop.classList.remove("busy");
+      btnEstop.innerHTML =
+        'Emergency Stop<span class="estop-btn-sub">cancel nav2 goal · halt /cmd_vel</span>';
+    });
+  });
+
   function pollNavStatus() {
     api("GET", "/api/nav/status").then(function(s) {
       var state = s.state || "idle";
@@ -555,11 +635,24 @@ h1 {
         activeTargetId = s.target_id || activeTargetId;
       } else {
         btnCancelNav.disabled = true;
-        if (state === "succeeded" || state === "failed" || state === "canceled" || state === "idle") {
+        if (
+          state === "succeeded" || state === "failed" ||
+          state === "canceled" || state === "estopped" || state === "idle"
+        ) {
           if (state !== "running") activeTargetId = null;
         }
       }
       highlightActivePOI();
+
+      if (s.last_estop) {
+        var when = s.last_estop.at ? new Date(s.last_estop.at).toLocaleTimeString() : "";
+        estopDetail.textContent =
+          "Last E-STOP " + when + " · " +
+          (s.last_estop.ok ? "ok" : "failed") +
+          (s.last_estop.detail ? " · " + s.last_estop.detail : "");
+      } else {
+        estopDetail.textContent = "";
+      }
     }).catch(function() {
       navDot.className = "status-dot";
       navText.textContent = "Disconnected";

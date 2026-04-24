@@ -90,6 +90,7 @@ foreach(script IN ITEMS
   scripts/profile_nav_stack.py
   scripts/pointcloud_relay.py
   scripts/save_map_and_waypoints.py
+  scripts/emergency_stop.py
   scripts/start_navigation_headless.sh
   scripts/start_navigation_no_server.sh
   scripts/wait_for_transform.py

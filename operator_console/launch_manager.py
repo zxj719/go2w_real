@@ -49,7 +49,15 @@ DEFAULT_NAVIGATE_COMMAND_TEMPLATE = (
     '--waypoint-file "$GO2W_WAYPOINT_FILE" '
     '--waypoint "{{waypoint}}"'
 )
+DEFAULT_ESTOP_COMMAND = (
+    "source /opt/ros/foxy/setup.bash && "
+    "if [ -f /home/unitree/unitree_ros2/setup.sh ]; then "
+    "source /home/unitree/unitree_ros2/setup.sh; fi && "
+    "source /home/unitree/ros_ws/install/setup.bash && "
+    "exec ros2 run go2w_real emergency_stop.py"
+)
 WAYPOINT_TEMPLATE_TOKEN = "{{waypoint}}"
+ESTOP_TIMEOUT_SECONDS = 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +82,9 @@ def load_profiles(path: Path) -> dict:
     navigate_command = str(
         nav_cfg.get("navigate_command", DEFAULT_NAVIGATE_COMMAND_TEMPLATE)
     ).strip()
+    estop_command = str(
+        nav_cfg.get("estop_command", DEFAULT_ESTOP_COMMAND)
+    ).strip()
     if WAYPOINT_TEMPLATE_TOKEN not in navigate_command:
         raise ValueError(
             "navigation.navigate_command must contain the "
@@ -87,6 +98,7 @@ def load_profiles(path: Path) -> dict:
             if waypoint_file_raw
             else "",
             "navigate_command": navigate_command,
+            "estop_command": estop_command,
         },
     }
 
@@ -384,9 +396,15 @@ class NavigationDispatcher:
     previous one. Exposes a status summary for the UI and a recent-log tail.
     """
 
-    def __init__(self, command_template: str, default_waypoint_file: str):
+    def __init__(
+        self,
+        command_template: str,
+        default_waypoint_file: str,
+        estop_command: str = DEFAULT_ESTOP_COMMAND,
+    ):
         self._command_template = command_template
         self._default_waypoint_file = default_waypoint_file
+        self._estop_command = estop_command
         self._lock = threading.Lock()
         self._process: Optional[subprocess.Popen] = None
         self._reader: Optional[threading.Thread] = None
@@ -397,11 +415,15 @@ class NavigationDispatcher:
         self._target_id: Optional[str] = None
         self._started_at: Optional[datetime.datetime] = None
         self._finished_at: Optional[datetime.datetime] = None
-        self._state = "idle"  # idle | starting | running | succeeded | failed | canceled
+        self._state = "idle"  # idle | starting | running | succeeded | failed | canceled | estopped
         self._exit_code: Optional[int] = None
         self._last_error: Optional[str] = None
         self._last_distance: Optional[float] = None
         self._observed_outcome: Optional[str] = None  # set from log heuristics
+        self._last_estop_at: Optional[datetime.datetime] = None
+        self._last_estop_ok: Optional[bool] = None
+        self._last_estop_detail: Optional[str] = None
+        self._estop_lock = threading.Lock()
 
     @property
     def default_waypoint_file(self) -> str:
@@ -433,6 +455,12 @@ class NavigationDispatcher:
                 result["remaining_distance"] = self._last_distance
             if self._process is not None and self._process.poll() is None:
                 result["pid"] = self._process.pid
+            if self._last_estop_at is not None:
+                result["last_estop"] = {
+                    "at": self._last_estop_at.isoformat(),
+                    "ok": bool(self._last_estop_ok),
+                    "detail": self._last_estop_detail or "",
+                }
             return result
 
     def logs(self, tail: int = 100) -> list:
@@ -514,6 +542,143 @@ class NavigationDispatcher:
         if not canceled:
             return {"ok": True, "message": "No active navigation"}
         return {"ok": True, "message": f"Canceled ({reason})"}
+
+    def estop(self, timeout_sec: float = ESTOP_TIMEOUT_SECONDS) -> dict:
+        """Emergency stop.
+
+        Fast path: SIGKILL any in-flight navigate_to_waypoint.py subprocess
+        *without* waiting for a graceful cleanup. Then run the configured
+        emergency_stop helper synchronously; it cancels every Nav2 goal and
+        publishes zero velocity to /cmd_vel for ~1.5s.
+
+        This runs under its own lock so two concurrent E-STOP presses don't
+        fan out into multiple helpers.
+        """
+        with self._estop_lock:
+            killed = self._hard_kill_current(reason="E-STOP")
+
+            if not self._estop_command:
+                detail = "no estop_command configured"
+                self._record_estop(False, detail)
+                return {"ok": False, "killed_process": killed, "error": detail}
+
+            start = time.monotonic()
+            try:
+                result = subprocess.run(
+                    ["bash", "-lc", self._estop_command],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=timeout_sec,
+                    start_new_session=True,
+                )
+            except subprocess.TimeoutExpired as exc:
+                detail = (
+                    f"emergency_stop helper timed out after {timeout_sec:.1f}s"
+                )
+                logger.error("%s", detail)
+                self._append_nav_log_locked(
+                    f"[E-STOP] TIMEOUT after {timeout_sec:.1f}s"
+                )
+                if exc.stdout:
+                    self._append_nav_log_locked(
+                        exc.stdout.decode("utf-8", errors="replace")
+                    )
+                self._record_estop(False, detail)
+                return {
+                    "ok": False,
+                    "killed_process": killed,
+                    "error": detail,
+                }
+            except Exception as exc:
+                detail = f"failed to spawn emergency_stop helper: {exc}"
+                logger.error("%s", detail)
+                self._append_nav_log_locked(f"[E-STOP] spawn error: {exc}")
+                self._record_estop(False, detail)
+                return {
+                    "ok": False,
+                    "killed_process": killed,
+                    "error": detail,
+                }
+
+            elapsed = time.monotonic() - start
+            stdout_text = (result.stdout or b"").decode("utf-8", errors="replace")
+            self._append_nav_log_locked(
+                f"[E-STOP] helper exit={result.returncode} in {elapsed:.2f}s"
+            )
+            if stdout_text.strip():
+                self._append_nav_log_locked(stdout_text.rstrip("\n"))
+
+            ok = result.returncode == 0
+            detail = (
+                f"emergency_stop helper exit {result.returncode} in {elapsed:.2f}s"
+            )
+            self._record_estop(ok, detail)
+
+            with self._lock:
+                if self._state in ("starting", "running"):
+                    self._state = "estopped"
+                    self._finished_at = datetime.datetime.now(datetime.timezone.utc)
+                    self._last_error = "emergency stop"
+
+            return {
+                "ok": ok,
+                "killed_process": killed,
+                "exit_code": result.returncode,
+                "elapsed_seconds": round(elapsed, 2),
+                "stdout": stdout_text,
+            }
+
+    def _hard_kill_current(self, reason: str) -> bool:
+        """SIGKILL the active process group. Returns True if a process was
+        killed."""
+        with self._lock:
+            proc = self._process
+            target = self._target_id
+            if proc is None or proc.poll() is not None:
+                return False
+
+        logger.warning(
+            "Hard-killing navigation subprocess for '%s' (%s)", target, reason
+        )
+        if hasattr(os, "killpg"):
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        else:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+
+        with self._lock:
+            if self._process is proc:
+                self._state = "estopped"
+                self._finished_at = datetime.datetime.now(datetime.timezone.utc)
+                self._exit_code = proc.returncode
+                self._last_error = f"hard-killed: {reason}"
+        return True
+
+    def _append_nav_log_locked(self, text: str):
+        with self._lock:
+            for line in str(text).splitlines() or [str(text)]:
+                self._log_buffer.append(line)
+
+    def _record_estop(self, ok: bool, detail: str):
+        with self._lock:
+            self._last_estop_at = datetime.datetime.now(datetime.timezone.utc)
+            self._last_estop_ok = bool(ok)
+            self._last_estop_detail = detail
 
     def _stop_current_locked_external(self, reason: str) -> bool:
         """Terminate the in-flight process and record outcome."""
@@ -835,6 +1000,12 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
             self._send_json(result)
             return
 
+        if path == "/api/nav/estop":
+            result = self.navigator.estop()
+            status_code = 200 if result.get("ok") else 500
+            self._send_json(result, status_code)
+            return
+
         self._send_json({"ok": False, "error": "Not found"}, 404)
 
 
@@ -899,6 +1070,7 @@ def main():
     navigator = NavigationDispatcher(
         command_template=nav_cfg["navigate_command"],
         default_waypoint_file=waypoint_file,
+        estop_command=nav_cfg.get("estop_command", DEFAULT_ESTOP_COMMAND),
     )
     web_dir = args.web_dir
 

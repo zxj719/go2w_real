@@ -27,6 +27,15 @@ navigation:
     exec ros2 run go2w_real navigate_to_waypoint.py
     --waypoint-file "$GO2W_WAYPOINT_FILE"
     --waypoint "{{waypoint}}"
+  # Emergency stop helper. Invoked by POST /api/nav/estop, AFTER the
+  # in-flight navigate_to_waypoint.py (if any) has been SIGKILLed.
+  # The helper cancels all /navigate_to_pose goals and publishes zero
+  # Twist to /cmd_vel for ~1.5s.
+  estop_command: >
+    source /opt/ros/foxy/setup.bash &&
+    if [ -f /home/unitree/unitree_ros2/setup.sh ]; then source /home/unitree/unitree_ros2/setup.sh; fi &&
+    source /home/unitree/ros_ws/install/setup.bash &&
+    exec ros2 run go2w_real emergency_stop.py
 
 profiles:
   navigation:
