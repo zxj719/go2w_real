@@ -31,7 +31,7 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
-  padding: 16px 16px 112px 16px; /* reserve space for the sticky E-STOP bar */
+  padding: 16px 16px 160px 16px; /* reserve space for the sticky E-STOP bar */
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -39,37 +39,50 @@ body {
 .estop-bar {
   position: fixed;
   left: 0; right: 0; bottom: 0;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-  background: linear-gradient(180deg, rgba(15,17,23,0.4) 0%, rgba(15,17,23,0.95) 60%);
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, rgba(15,17,23,0.3) 0%, rgba(15,17,23,0.97) 60%);
   z-index: 200;
   pointer-events: none;
 }
+
+@keyframes estop-pulse {
+  0%, 100% { box-shadow: 0 8px 26px rgba(239,68,68,0.55); }
+  50%      { box-shadow: 0 10px 36px rgba(239,68,68,0.95); }
+}
+
 .estop-btn {
   pointer-events: auto;
   display: block;
   width: 100%;
-  padding: 18px 16px;
-  border: 2px solid #f87171;
-  border-radius: 10px;
-  background: var(--red);
+  padding: 22px 16px;
+  border: 3px solid #fca5a5;
+  border-radius: 12px;
+  background: #dc2626;
   color: #fff;
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 2px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 3px;
   text-transform: uppercase;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(239,68,68,0.35);
-  transition: opacity 0.1s, transform 0.05s;
+  animation: estop-pulse 1.6s ease-in-out infinite;
+  transition: transform 0.05s, opacity 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
 }
-.estop-btn:active { transform: scale(0.98); opacity: 0.9; }
-.estop-btn.busy { opacity: 0.6; }
+.estop-btn:active { transform: scale(0.98); }
+.estop-btn.busy {
+  animation: none;
+  background: #7f1d1d;
+  border-color: #7f1d1d;
+  opacity: 0.85;
+}
 .estop-btn-sub {
   display: block;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 1px;
   margin-top: 4px;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 .estop-detail {
   margin-top: 6px;
@@ -77,6 +90,7 @@ body {
   color: var(--text-dim);
   text-align: center;
   pointer-events: auto;
+  min-height: 14px;
 }
 
 h1 {
@@ -331,8 +345,8 @@ h1 {
 
 <div class="estop-bar">
   <button class="estop-btn" id="btnEstop" type="button">
-    Emergency Stop
-    <span class="estop-btn-sub">cancel nav2 goal · halt /cmd_vel</span>
+    紧急停止 · E-STOP
+    <span class="estop-btn-sub">kill all profiles · cancel nav2 · publish /cmd_vel = 0</span>
   </button>
   <div class="estop-detail" id="estopDetail"></div>
 </div>
@@ -588,27 +602,51 @@ h1 {
 
   // --- Emergency stop -----------------------------------------------------
 
+  var ESTOP_LABEL_HTML =
+    '紧急停止 · E-STOP' +
+    '<span class="estop-btn-sub">kill all profiles · cancel nav2 · publish /cmd_vel = 0</span>';
+
+  function sendEstop(attempt) {
+    attempt = attempt || 1;
+    return fetch(API + "/api/nav/estop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      cache: "no-store",
+    }).then(function(r) { return r.json(); }).catch(function(err) {
+      // One instant retry — user slammed the button, the phone may have
+      // fumbled the first request. Never leave them guessing.
+      if (attempt < 2) return sendEstop(attempt + 1);
+      throw err;
+    });
+  }
+
   btnEstop.addEventListener("click", function() {
     if (btnEstop.classList.contains("busy")) return;
     btnEstop.classList.add("busy");
-    btnEstop.textContent = "STOPPING…";
+    btnEstop.innerHTML = 'STOPPING…<span class="estop-btn-sub">killing profiles + holding /cmd_vel = 0</span>';
     showToast("Emergency stop sent");
-    api("POST", "/api/nav/estop").then(function(r) {
-      if (r.ok) {
-        showToast(
-          "E-STOP ok · killed=" + (r.killed_process ? "yes" : "no") +
-          " · " + (r.elapsed_seconds != null ? r.elapsed_seconds + "s" : "")
-        );
+
+    sendEstop().then(function(r) {
+      var parts = [];
+      parts.push(r.ok ? "E-STOP ok" : "E-STOP FAILED");
+      if (r.killed_process) parts.push("killed nav subprocess");
+      if (r.stopped_profiles && r.stopped_profiles.length) {
+        parts.push("stopped: " + r.stopped_profiles.join(", "));
       } else {
-        showToast("E-STOP: " + (r.error || "failed"));
+        parts.push("no profile was running");
       }
+      if (r.elapsed_seconds != null) parts.push(r.elapsed_seconds + "s");
+      if (!r.ok && r.error) parts.push(r.error);
+      showToast(parts.join(" · "));
       pollNavStatus();
+      pollStatus();
+      pollHealth();
     }).catch(function() {
-      showToast("E-STOP: connection failed");
+      showToast("E-STOP: connection failed after retry — SSH to robot and `pkill -f navigation`.");
     }).finally(function() {
       btnEstop.classList.remove("busy");
-      btnEstop.innerHTML =
-        'Emergency Stop<span class="estop-btn-sub">cancel nav2 goal · halt /cmd_vel</span>';
+      btnEstop.innerHTML = ESTOP_LABEL_HTML;
     });
   });
 

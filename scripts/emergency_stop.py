@@ -31,8 +31,8 @@ def _parse_args(argv):
     parser = argparse.ArgumentParser(description="GO2W emergency stop helper")
     parser.add_argument("--cmd-vel-topic", default="/cmd_vel")
     parser.add_argument("--action-name", default="/navigate_to_pose")
-    parser.add_argument("--hold-seconds", type=float, default=1.5)
-    parser.add_argument("--rate-hz", type=float, default=20.0)
+    parser.add_argument("--hold-seconds", type=float, default=3.0)
+    parser.add_argument("--rate-hz", type=float, default=30.0)
     parser.add_argument("--cancel-timeout", type=float, default=1.0)
     return parser.parse_args(argv)
 

@@ -374,6 +374,31 @@ class ProcessManager:
             if proc and proc.state in ("running", "starting"):
                 proc.stop()
 
+    def running_profiles(self) -> list:
+        """Names of profiles that are currently running or starting."""
+        with self._lock:
+            names = list(self._managed.keys())
+        live = []
+        for name in names:
+            proc = self._managed.get(name)
+            if proc and proc.state in ("running", "starting"):
+                live.append(name)
+        return live
+
+    def stop_running(self, grace_seconds: float = 5.0) -> list:
+        """Stop every running profile. Returns the names actually stopped."""
+        stopped: list = []
+        for name in self.running_profiles():
+            proc = self._managed.get(name)
+            if proc is None:
+                continue
+            try:
+                proc.stop(grace_seconds=grace_seconds)
+                stopped.append(name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to stop profile '%s': %s", name, exc)
+        return stopped
+
 
 # ---------------------------------------------------------------------------
 # Active navigation (POI dispatcher)
@@ -543,76 +568,131 @@ class NavigationDispatcher:
             return {"ok": True, "message": "No active navigation"}
         return {"ok": True, "message": f"Canceled ({reason})"}
 
-    def estop(self, timeout_sec: float = ESTOP_TIMEOUT_SECONDS) -> dict:
-        """Emergency stop.
+    def estop(
+        self,
+        stack_manager: Optional["ProcessManager"] = None,
+        timeout_sec: float = ESTOP_TIMEOUT_SECONDS,
+    ) -> dict:
+        """Nuclear emergency stop.
 
-        Fast path: SIGKILL any in-flight navigate_to_waypoint.py subprocess
-        *without* waiting for a graceful cleanup. Then run the configured
-        emergency_stop helper synchronously; it cancels every Nav2 goal and
-        publishes zero velocity to /cmd_vel for ~1.5s.
+        Fires in this order, with the zero-velocity stream and the stack
+        teardown happening **in parallel** so the robot keeps receiving
+        Twist(0) while Nav2/SLAM/xt16 are being killed:
 
-        This runs under its own lock so two concurrent E-STOP presses don't
-        fan out into multiple helpers.
+          1. SIGKILL the in-flight navigate_to_waypoint.py subprocess (no
+             grace, fastest-path).
+          2. Spawn the whitelisted emergency_stop helper: it cancels every
+             /navigate_to_pose goal via the action's cancel_goal service,
+             then publishes Twist(0) to /cmd_vel at ~30 Hz for ~3 s.
+          3. In parallel with (2), if a stack_manager is given, stop every
+             running profile (SIGTERM → SIGKILL via killpg). Profile shell
+             scripts (start_navigation_no_server.sh etc.) run their own
+             cleanup traps so Nav2, slam_rf2o, and xt16_driver go down
+             together.
+          4. Wait for both the helper and the teardown thread to finish
+             (capped at 2 × timeout_sec so a wedged profile shell never
+             blocks the caller indefinitely).
+
+        The estop_lock keeps concurrent button taps from fanning out into
+        multiple helpers.
         """
         with self._estop_lock:
-            killed = self._hard_kill_current(reason="E-STOP")
+            t0 = time.monotonic()
+            killed_pid = self._hard_kill_current(reason="E-STOP")
 
             if not self._estop_command:
                 detail = "no estop_command configured"
                 self._record_estop(False, detail)
-                return {"ok": False, "killed_process": killed, "error": detail}
+                return {"ok": False, "killed_process": killed_pid, "error": detail}
 
-            start = time.monotonic()
-            try:
-                result = subprocess.run(
-                    ["bash", "-lc", self._estop_command],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    timeout=timeout_sec,
-                    start_new_session=True,
-                )
-            except subprocess.TimeoutExpired as exc:
-                detail = (
-                    f"emergency_stop helper timed out after {timeout_sec:.1f}s"
-                )
-                logger.error("%s", detail)
-                self._append_nav_log_locked(
-                    f"[E-STOP] TIMEOUT after {timeout_sec:.1f}s"
-                )
-                if exc.stdout:
-                    self._append_nav_log_locked(
-                        exc.stdout.decode("utf-8", errors="replace")
+            # (2) helper — published zeros bracket the teardown.
+            helper_result: dict = {"kind": "pending"}
+
+            def _run_helper():
+                try:
+                    proc = subprocess.run(
+                        ["bash", "-lc", self._estop_command],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        timeout=timeout_sec,
+                        start_new_session=True,
                     )
-                self._record_estop(False, detail)
-                return {
-                    "ok": False,
-                    "killed_process": killed,
-                    "error": detail,
-                }
-            except Exception as exc:
-                detail = f"failed to spawn emergency_stop helper: {exc}"
-                logger.error("%s", detail)
-                self._append_nav_log_locked(f"[E-STOP] spawn error: {exc}")
-                self._record_estop(False, detail)
-                return {
-                    "ok": False,
-                    "killed_process": killed,
-                    "error": detail,
-                }
+                    helper_result.update(
+                        kind="done",
+                        returncode=proc.returncode,
+                        stdout=(proc.stdout or b"").decode("utf-8", errors="replace"),
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    helper_result.update(
+                        kind="timeout",
+                        stdout=(exc.stdout or b"").decode("utf-8", errors="replace")
+                        if exc.stdout
+                        else "",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    helper_result.update(kind="error", error=str(exc))
 
-            elapsed = time.monotonic() - start
-            stdout_text = (result.stdout or b"").decode("utf-8", errors="replace")
-            self._append_nav_log_locked(
-                f"[E-STOP] helper exit={result.returncode} in {elapsed:.2f}s"
+            helper_thread = threading.Thread(
+                target=_run_helper, name="estop-helper", daemon=True
             )
+            helper_thread.start()
+
+            # (3) in parallel, stop every running profile.
+            stop_outcome: dict = {"stopped": [], "error": None}
+
+            def _run_stop_all():
+                if stack_manager is None:
+                    return
+                try:
+                    stop_outcome["stopped"] = stack_manager.stop_running(
+                        grace_seconds=5.0
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    stop_outcome["error"] = str(exc)
+
+            stop_thread = threading.Thread(
+                target=_run_stop_all, name="estop-stop-all", daemon=True
+            )
+            stop_thread.start()
+
+            # (4) await both, cap so a hung profile script cannot wedge us.
+            overall_deadline = t0 + max(timeout_sec * 2.0, timeout_sec + 5.0)
+
+            helper_thread.join(timeout=max(overall_deadline - time.monotonic(), 0.1))
+            stop_thread.join(timeout=max(overall_deadline - time.monotonic(), 0.1))
+
+            elapsed = time.monotonic() - t0
+            kind = helper_result.get("kind")
+            returncode = helper_result.get("returncode")
+            stdout_text = helper_result.get("stdout", "")
+
+            if kind == "done":
+                ok = returncode == 0
+                detail = f"helper exit {returncode} in {elapsed:.2f}s"
+            elif kind == "timeout":
+                ok = False
+                detail = f"helper timed out after {timeout_sec:.1f}s"
+            elif kind == "error":
+                ok = False
+                detail = f"helper spawn failed: {helper_result.get('error')}"
+            else:
+                ok = False
+                detail = "helper did not complete in time"
+
+            self._append_nav_log_locked(f"[E-STOP] {detail}")
             if stdout_text.strip():
                 self._append_nav_log_locked(stdout_text.rstrip("\n"))
+            if stop_outcome["stopped"]:
+                self._append_nav_log_locked(
+                    "[E-STOP] stopped profiles: "
+                    + ", ".join(stop_outcome["stopped"])
+                )
+            if stop_outcome["error"]:
+                self._append_nav_log_locked(
+                    "[E-STOP] stop_all error: " + stop_outcome["error"]
+                )
 
-            ok = result.returncode == 0
-            detail = (
-                f"emergency_stop helper exit {result.returncode} in {elapsed:.2f}s"
-            )
             self._record_estop(ok, detail)
 
             with self._lock:
@@ -623,10 +703,13 @@ class NavigationDispatcher:
 
             return {
                 "ok": ok,
-                "killed_process": killed,
-                "exit_code": result.returncode,
+                "killed_process": killed_pid,
+                "stopped_profiles": stop_outcome["stopped"],
+                "stop_error": stop_outcome["error"],
+                "exit_code": returncode,
                 "elapsed_seconds": round(elapsed, 2),
                 "stdout": stdout_text,
+                "helper": kind,
             }
 
     def _hard_kill_current(self, reason: str) -> bool:
@@ -1001,7 +1084,9 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/nav/estop":
-            result = self.navigator.estop()
+            # Nuclear E-STOP: kills every running profile AND publishes
+            # Twist(0) to /cmd_vel in parallel. See NavigationDispatcher.estop.
+            result = self.navigator.estop(stack_manager=self.manager)
             status_code = 200 if result.get("ok") else 500
             self._send_json(result, status_code)
             return
