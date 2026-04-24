@@ -46,3 +46,25 @@ profiles:
       go2w_waypoints.yaml if you switch to this profile.
     env:
       ROS_DOMAIN_ID: "0"
+
+  navigation_headless_ws:
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh
+    description: >
+      Legacy headless stack that ALSO launches navigation_executor.py
+      connecting to the external WebSocket navigation server (default
+      ws://192.168.123.186:8100/ws/navigation/executor). Override the URI
+      with GO2W_SERVER_URI. DO NOT use the POI picker while this profile is
+      running — navigation_executor.py owns the Nav2 action and will fight
+      POI dispatches.
+    env:
+      ROS_DOMAIN_ID: "0"
+      GO2W_SHOW_EXECUTOR_LOGS: "1"
+
+  navigation_headless_ws_test_map:
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh test_1
+    description: >
+      Same legacy WebSocket-executor stack but using the `test_1` map preset.
+      Same warning: POI picker is disabled while this profile runs.
+    env:
+      ROS_DOMAIN_ID: "0"
+      GO2W_SHOW_EXECUTOR_LOGS: "1"
