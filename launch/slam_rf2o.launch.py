@@ -1,6 +1,7 @@
 """
-GO2W real robot SLAM + Nav2 with fused local odometry:
-  sportmodestate -> /sport_odom + /sport_imu -> robot_localization EKF -> /odom
+GO2W real robot SLAM + Nav2 with RF2O-first local odometry:
+  pointcloud -> scan -> RF2O -> /odom
+  optional: /sport_odom + /sport_imu -> robot_localization EKF -> /odom
   pointcloud -> scan -> slam_toolbox -> Nav2
 
 Supports two SLAM modes:
@@ -27,8 +28,10 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     LogInfo,
+    OpaqueFunction,
     RegisterEventHandler,
     SetEnvironmentVariable,
+    SetLaunchConfiguration,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -45,6 +48,13 @@ from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 
+from go2w_real.headless_config import (
+    DEFAULT_HEADLESS_CONFIG_PATH,
+    build_localization_param_rewrites,
+    build_nav2_param_rewrites,
+    load_headless_config,
+)
+
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory("go2w_real")
@@ -56,6 +66,11 @@ def generate_launch_description():
     rviz_software_rendering = LaunchConfiguration("rviz_software_rendering")
     slam_mode = LaunchConfiguration("slam_mode")
     slam_map_file = LaunchConfiguration("slam_map_file")
+    nav2_params_file = LaunchConfiguration("nav2_params_file")
+    slam_localization_params_file = LaunchConfiguration(
+        "slam_localization_params_file"
+    )
+    slam_mapping_params_file = LaunchConfiguration("slam_mapping_params_file")
     angular_deadband = LaunchConfiguration("angular_deadband")
     use_odom_fusion = LaunchConfiguration("use_odom_fusion")
     odom_fusion_params_file = LaunchConfiguration("odom_fusion_params_file")
@@ -64,13 +79,35 @@ def generate_launch_description():
     start_explorer = LaunchConfiguration("start_explorer")
     explorer_params_file = LaunchConfiguration("explorer_params_file")
     explorer_start_delay = LaunchConfiguration("explorer_start_delay")
+    headless_config_file = LaunchConfiguration("headless_config_file")
+    headless_profile = LaunchConfiguration("headless_profile")
+    headless_nav2_xy_goal_tolerance = LaunchConfiguration(
+        "headless_nav2_xy_goal_tolerance"
+    )
+    headless_nav2_yaw_goal_tolerance = LaunchConfiguration(
+        "headless_nav2_yaw_goal_tolerance"
+    )
+    headless_do_loop_closing = LaunchConfiguration("headless_do_loop_closing")
+    headless_link_match_minimum_response_fine = LaunchConfiguration(
+        "headless_link_match_minimum_response_fine"
+    )
+    headless_loop_match_minimum_response_coarse = LaunchConfiguration(
+        "headless_loop_match_minimum_response_coarse"
+    )
+    headless_loop_match_minimum_response_fine = LaunchConfiguration(
+        "headless_loop_match_minimum_response_fine"
+    )
 
     xacro_file = os.path.join(pkg_dir, "urdf", "go2w_real.urdf.xacro")
-    slam_localization_params_file = os.path.join(pkg_dir, "config", "slam_params.yaml")
-    slam_mapping_params_file = os.path.join(
+    default_slam_localization_params_file = os.path.join(
+        pkg_dir, "config", "slam_params.yaml"
+    )
+    default_slam_mapping_params_file = os.path.join(
         pkg_dir, "config", "slam_mapping_params.yaml"
     )
-    nav2_params_file = os.path.join(pkg_dir, "config", "nav2_params_foxy.yaml")
+    default_nav2_params_file = os.path.join(
+        pkg_dir, "config", "nav2_params_foxy.yaml"
+    )
     odom_fusion_default_params_file = os.path.join(
         pkg_dir, "config", "odom_fusion_params.yaml"
     )
@@ -85,7 +122,11 @@ def generate_launch_description():
     configured_params = RewrittenYaml(
         source_file=nav2_params_file,
         root_key="",
-        param_rewrites={"autostart": "true"},
+        param_rewrites={
+            "autostart": "true",
+            "xy_goal_tolerance": headless_nav2_xy_goal_tolerance,
+            "yaw_goal_tolerance": headless_nav2_yaw_goal_tolerance,
+        },
         convert_types=True,
     )
     configured_localization_slam_params = RewrittenYaml(
@@ -95,6 +136,10 @@ def generate_launch_description():
             "mode": "localization",
             "map_file_name": slam_map_file,
             "map_start_at_dock": "true",
+            "do_loop_closing": headless_do_loop_closing,
+            "link_match_minimum_response_fine": headless_link_match_minimum_response_fine,
+            "loop_match_minimum_response_coarse": headless_loop_match_minimum_response_coarse,
+            "loop_match_minimum_response_fine": headless_loop_match_minimum_response_fine,
         },
         convert_types=True,
     )
@@ -153,6 +198,21 @@ def generate_launch_description():
             "Serialized slam_toolbox map prefix without .data/.posegraph suffix"
         ),
     )
+    declare_nav2_params_file = DeclareLaunchArgument(
+        "nav2_params_file",
+        default_value=default_nav2_params_file,
+        description="Nav2 parameter YAML file",
+    )
+    declare_slam_localization_params_file = DeclareLaunchArgument(
+        "slam_localization_params_file",
+        default_value=default_slam_localization_params_file,
+        description="slam_toolbox localization parameter YAML file",
+    )
+    declare_slam_mapping_params_file = DeclareLaunchArgument(
+        "slam_mapping_params_file",
+        default_value=default_slam_mapping_params_file,
+        description="slam_toolbox mapping parameter YAML file",
+    )
     declare_angular_deadband = DeclareLaunchArgument(
         "angular_deadband",
         default_value="0.12",
@@ -162,10 +222,10 @@ def generate_launch_description():
     )
     declare_use_odom_fusion = DeclareLaunchArgument(
         "use_odom_fusion",
-        default_value="true",
+        default_value="false",
         description=(
-            "Publish /odom from robot_localization EKF fused from "
-            "/sport_odom + /sport_imu; set false to fall back to RF2O odom"
+            "Default false keeps /odom on RF2O odom only; set true to publish "
+            "/odom from robot_localization EKF fused from /sport_odom + /sport_imu"
         ),
     )
     declare_odom_fusion_params_file = DeclareLaunchArgument(
@@ -200,6 +260,50 @@ def generate_launch_description():
         default_value="8.0",
         description="Seconds to wait after Nav2 launch before starting exploration",
     )
+    declare_headless_config_file = DeclareLaunchArgument(
+        "headless_config_file",
+        default_value=str(DEFAULT_HEADLESS_CONFIG_PATH),
+        description="Unified headless runtime config YAML",
+    )
+    declare_headless_profile = DeclareLaunchArgument(
+        "headless_profile",
+        default_value="",
+        description="Unified headless runtime profile name",
+    )
+
+    def _load_headless_runtime_overrides(context):
+        config_path = headless_config_file.perform(context)
+        config = load_headless_config(config_path)
+        nav2_rewrites = build_nav2_param_rewrites(config)
+        localization_rewrites = build_localization_param_rewrites(config)
+        _ = headless_profile.perform(context)
+
+        return [
+            SetLaunchConfiguration(
+                "headless_nav2_xy_goal_tolerance",
+                nav2_rewrites["xy_goal_tolerance"],
+            ),
+            SetLaunchConfiguration(
+                "headless_nav2_yaw_goal_tolerance",
+                nav2_rewrites["yaw_goal_tolerance"],
+            ),
+            SetLaunchConfiguration(
+                "headless_do_loop_closing",
+                localization_rewrites["do_loop_closing"],
+            ),
+            SetLaunchConfiguration(
+                "headless_link_match_minimum_response_fine",
+                localization_rewrites["link_match_minimum_response_fine"],
+            ),
+            SetLaunchConfiguration(
+                "headless_loop_match_minimum_response_coarse",
+                localization_rewrites["loop_match_minimum_response_coarse"],
+            ),
+            SetLaunchConfiguration(
+                "headless_loop_match_minimum_response_fine",
+                localization_rewrites["loop_match_minimum_response_fine"],
+            ),
+        ]
 
     stdout_linebuf = SetEnvironmentVariable(
         "RCUTILS_LOGGING_BUFFERED_STREAM", "1"
@@ -613,9 +717,9 @@ def generate_launch_description():
             "  - RViz opens with the Nav2 layout and a 2D Goal Pose tool\n"
             "  - Click '2D Goal Pose' in RViz, then drag to set goal position + yaw\n"
             "  - Robot must already be standing before motion commands are sent\n"
-            "  - /odom defaults to robot_localization EKF fused from "
-            "/sport_odom + /sport_imu\n"
-            "  - Set use_odom_fusion:=false to fall back to RF2O odom\n"
+            "  - /odom defaults to RF2O odom only\n"
+            "  - Set use_odom_fusion:=true to enable robot_localization EKF "
+            "from /sport_odom + /sport_imu\n"
             "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
             "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
             "\n========================================\n",
@@ -632,6 +736,9 @@ def generate_launch_description():
             declare_rviz_software_rendering,
             declare_slam_mode,
             declare_slam_map_file,
+            declare_nav2_params_file,
+            declare_slam_localization_params_file,
+            declare_slam_mapping_params_file,
             declare_angular_deadband,
             declare_use_odom_fusion,
             declare_odom_fusion_params_file,
@@ -640,6 +747,9 @@ def generate_launch_description():
             declare_start_explorer,
             declare_explorer_params_file,
             declare_explorer_start_delay,
+            declare_headless_config_file,
+            declare_headless_profile,
+            OpaqueFunction(function=_load_headless_runtime_overrides),
             rviz_software_gl,
             rviz_gl_version,
             robot_state_publisher,

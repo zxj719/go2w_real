@@ -1,0 +1,43 @@
+default_profile: zt_0
+
+profiles:
+  zt_0:
+    waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml
+    slam_map_file: /home/unitree/ros_ws/src/map/zt_0
+  test_1:
+    waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml
+    slam_map_file: /home/unitree/ros_ws/src/map/test_1
+
+cleanup:
+  process_matchers:
+    - /unitree/module/unitree_slam/bin/xt16_driver
+    - ros2 launch go2w_real slam_rf2o.launch.py
+    - navigation_executor.py
+  term_timeout_sec: 5
+  kill_timeout_sec: 2
+
+launch:
+  network_interface: eth0
+  use_rviz: false
+  slam_mode: localization
+  use_odom_fusion: false
+  nav2_wait_timeout_sec: 120
+
+nav2:
+  xy_goal_tolerance: 0.5
+  yaw_goal_tolerance: 3.14
+
+slam_localization:
+  do_loop_closing: true
+  link_match_minimum_response_fine: 0.2
+  loop_match_minimum_response_coarse: 0.5
+  loop_match_minimum_response_fine: 0.6
+
+executor:
+  server_uri: ws://192.168.123.186:8100/ws/navigation/executor
+  server_timeout: 10.0
+  heartbeat_interval: 30.0
+  reconnect_delay: 3.0
+  nav_event_timeout: 15.0
+  show_logs: true
+  record_bag: true

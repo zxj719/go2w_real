@@ -2,7 +2,7 @@ import importlib.util
 from pathlib import Path
 
 
-REPO_ROOT = Path("/home/unitree/ros_ws")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 BRIDGE_PATH = REPO_ROOT / "src/go2w_real/scripts/go2w_bridge.py"
 
 

@@ -85,6 +85,7 @@ foreach(script IN ITEMS
   scripts/go2w_bridge.py
   scripts/go2w_motion_executor.py
   scripts/navigate_to_waypoint.py
+  scripts/navigation_headless_config.py
   scripts/navigation_executor.py
   scripts/navigation_sender_test_poi001.py
   scripts/profile_nav_stack.py
@@ -139,6 +140,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_navigation_executor
     test/test_navigation_executor.py
+  )
+  ament_add_pytest_test(
+    test_headless_config
+    test/test_headless_config.py
+  )
+  ament_add_pytest_test(
+    test_start_navigation_headless
+    test/test_start_navigation_headless.py
   )
   ament_add_pytest_test(
     test_navigate_to_waypoint

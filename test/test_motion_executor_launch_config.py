@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 
 
-REPO_ROOT = Path("/home/unitree/ros_ws")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_executor_config_matches_nav2_goal_tolerance_and_recovery_policy():
@@ -29,9 +29,7 @@ def test_executor_config_matches_nav2_goal_tolerance_and_recovery_policy():
     assert executor_params["navigation_status_topic"] == "/navigate_to_pose/_action/status"
     assert executor_params["costmap_unsafe_cost"] == 200
     assert nav2_cfg["recoveries_server"]["ros__parameters"]["recovery_plugins"] == [
-        "backup",
         "spin",
-        "wait",
     ]
 
 
@@ -90,17 +88,28 @@ def test_launch_exposes_bridge_angular_deadband_argument():
     assert '"angular_deadband": angular_deadband' in bringup_launch_text
 
 
-def test_fast_recovery_tree_backs_up_before_spinning():
+def test_launch_file_loads_headless_config_for_nav2_and_localization_rewrites():
+    launch_text = (REPO_ROOT / "src/go2w_real/launch/slam_rf2o.launch.py").read_text()
+
+    assert 'DeclareLaunchArgument(\n        "headless_config_file"' in launch_text
+    assert 'DeclareLaunchArgument(\n        "headless_profile"' in launch_text
+    assert "load_headless_config" in launch_text
+    assert "build_nav2_param_rewrites" in launch_text
+    assert "build_localization_param_rewrites" in launch_text
+    assert "OpaqueFunction" in launch_text
+
+
+def test_fast_recovery_tree_spins_immediately_without_backup_or_wait():
     bt_xml = (
         REPO_ROOT
         / "src/go2w_real/behavior_trees/navigate_w_replanning_and_recovery_fast.xml"
     ).read_text()
 
-    assert (
-        '<BackUp server_name="backup" backup_dist="0.20" backup_speed="0.08" server_timeout="5000"/>'
-        in bt_xml
-    )
-    assert bt_xml.index("<BackUp") < bt_xml.index("<Spin")
+    assert '<BackUp server_name="backup"' not in bt_xml
+    assert '<Wait wait_duration="2" server_timeout="5000"/>' not in bt_xml
+    assert "ReinitializeGlobalLocalization" not in bt_xml
+    assert '<Spin spin_dist="0.8" server_timeout="5000"/>' in bt_xml
+    assert bt_xml.index('ClearGlobalCostmap-Subtree"') < bt_xml.index("<Spin")
 
 
 def test_fast_recovery_tree_sets_explicit_server_timeout_on_bt_nodes():
@@ -115,6 +124,13 @@ def test_fast_recovery_tree_sets_explicit_server_timeout_on_bt_nodes():
     assert 'ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>' in bt_xml
     assert 'ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>' in bt_xml
     assert 'ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap" server_timeout="5000"/>' in bt_xml
-    assert '<BackUp server_name="backup" backup_dist="0.20" backup_speed="0.08" server_timeout="5000"/>' in bt_xml
-    assert '<Spin spin_dist="1.57" server_timeout="5000"/>' in bt_xml
-    assert '<Wait wait_duration="2" server_timeout="5000"/>' in bt_xml
+    assert '<Spin spin_dist="0.8" server_timeout="5000"/>' in bt_xml
+
+
+def test_fast_recovery_tree_uses_moderate_replanning_rate():
+    bt_xml = (
+        REPO_ROOT
+        / "src/go2w_real/behavior_trees/navigate_w_replanning_and_recovery_fast.xml"
+    ).read_text()
+
+    assert '<RateController hz="2.0">' in bt_xml

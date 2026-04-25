@@ -1,10 +1,15 @@
 import asyncio
 import importlib.util
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 
-REPO_ROOT = Path("/home/unitree/ros_ws")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PACKAGE_ROOT = REPO_ROOT / "src/go2w_real"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
 NAV_EXECUTOR_PATH = REPO_ROOT / "src/go2w_real/scripts/navigation_executor.py"
 
 
@@ -52,6 +57,63 @@ def test_parse_cli_args_can_use_waypoint_yaw():
 
     assert config["ignore_waypoint_yaw"] is False
     assert ros_args == []
+
+
+def test_parse_cli_args_loads_executor_defaults_from_headless_config(tmp_path):
+    config_path = tmp_path / "navigation_headless.yaml"
+    config_path.write_text(
+        """
+default_profile: zt_0
+profiles:
+  zt_0:
+    waypoint_file: /tmp/zt_0.yaml
+    slam_map_file: /tmp/zt_0
+executor:
+  server_uri: ws://10.0.0.2:8100/ws/navigation/executor
+  server_timeout: 7.0
+  heartbeat_interval: 9.0
+  reconnect_delay: 11.0
+  nav_event_timeout: 13.0
+  show_logs: false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config, ros_args = nav_exec._parse_cli_args(["--config", str(config_path)])
+
+    assert config["server_uri"] == "ws://10.0.0.2:8100/ws/navigation/executor"
+    assert config["server_timeout"] == 7.0
+    assert config["heartbeat_interval"] == 9.0
+    assert config["reconnect_delay"] == 11.0
+    assert config["nav_event_timeout"] == 13.0
+    assert ros_args == []
+
+
+def test_parse_cli_args_explicit_flags_override_headless_config(tmp_path):
+    config_path = tmp_path / "navigation_headless.yaml"
+    config_path.write_text(
+        """
+default_profile: zt_0
+profiles:
+  zt_0:
+    waypoint_file: /tmp/zt_0.yaml
+    slam_map_file: /tmp/zt_0
+executor:
+  server_uri: ws://10.0.0.2:8100/ws/navigation/executor
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config, _ = nav_exec._parse_cli_args(
+        [
+            "--config",
+            str(config_path),
+            "--server-uri",
+            "ws://127.0.0.1:8100/ws/navigation/executor",
+        ]
+    )
+
+    assert config["server_uri"] == "ws://127.0.0.1:8100/ws/navigation/executor"
 
 
 def test_apply_waypoint_to_pose_stamped_ignores_yaw_by_default():

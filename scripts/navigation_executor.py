@@ -18,9 +18,21 @@ import fcntl
 import json
 import math
 import os
+from pathlib import Path
 import sys
 import threading
 import time
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from go2w_real.headless_config import (  # noqa: E402
+    DEFAULT_HEADLESS_CONFIG_PATH,
+    build_executor_settings,
+    load_headless_config,
+)
 
 
 def _get_env_text(name, default):
@@ -86,6 +98,8 @@ def _print_help():
         f"Usage: ros2 run go2w_real navigation_executor.py [options] [--ros-args ...]\n"
         "\n"
         "Options:\n"
+        f"  --config PATH             Unified headless config path, default: {DEFAULT_HEADLESS_CONFIG_PATH}\n"
+        "  --profile NAME            Headless config profile name, default: config default_profile\n"
         f"  --server-uri URI          WebSocket URI, default: {DEFAULT_SERVER_URI}\n"
         f"  --waypoint-file PATH      Waypoint YAML path, default: {DEFAULT_WAYPOINT_FILE}\n"
         f"  --action-name NAME        Nav2 action name, default: {DEFAULT_ACTION_NAME}\n"
@@ -104,15 +118,49 @@ def _print_help():
     )
 
 
+def _extract_headless_config_args(raw_args):
+    config_path = str(DEFAULT_HEADLESS_CONFIG_PATH)
+    profile_name = ""
+
+    i = 0
+    while i < len(raw_args):
+        arg = raw_args[i]
+        if arg == "--config" and i + 1 < len(raw_args):
+            config_path = raw_args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--config="):
+            config_path = arg.split("=", 1)[1]
+            i += 1
+            continue
+        if arg == "--profile" and i + 1 < len(raw_args):
+            profile_name = raw_args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--profile="):
+            profile_name = arg.split("=", 1)[1]
+            i += 1
+            continue
+        i += 1
+
+    return config_path, profile_name
+
+
 def _parse_cli_args(raw_args):
+    headless_config_path, headless_profile = _extract_headless_config_args(raw_args)
+    headless_config = load_headless_config(headless_config_path)
+    runtime = build_executor_settings(headless_config, headless_profile or None)
+
     config = {
-        "server_uri": DEFAULT_SERVER_URI,
-        "waypoint_file": DEFAULT_WAYPOINT_FILE,
+        "config_path": headless_config_path,
+        "profile": runtime["profile"],
+        "server_uri": runtime["server_uri"] or DEFAULT_SERVER_URI,
+        "waypoint_file": runtime["waypoint_file"] or DEFAULT_WAYPOINT_FILE,
         "action_name": DEFAULT_ACTION_NAME,
-        "server_timeout": DEFAULT_SERVER_TIMEOUT,
-        "heartbeat_interval": DEFAULT_HEARTBEAT_INTERVAL,
-        "reconnect_delay": DEFAULT_RECONNECT_DELAY,
-        "nav_event_timeout": DEFAULT_NAV_EVENT_TIMEOUT,
+        "server_timeout": runtime["server_timeout"],
+        "heartbeat_interval": runtime["heartbeat_interval"],
+        "reconnect_delay": runtime["reconnect_delay"],
+        "nav_event_timeout": runtime["nav_event_timeout"],
         "abort_replan_retries": DEFAULT_ABORT_REPLAN_RETRIES,
         "ignore_waypoint_yaw": DEFAULT_IGNORE_WAYPOINT_YAW,
         "list_pois": False,
@@ -126,6 +174,18 @@ def _parse_cli_args(raw_args):
         if arg in ("-h", "--help"):
             _print_help()
             raise SystemExit(0)
+        if arg == "--config" and i + 1 < len(raw_args):
+            i += 2
+            continue
+        if arg.startswith("--config="):
+            i += 1
+            continue
+        if arg == "--profile" and i + 1 < len(raw_args):
+            i += 2
+            continue
+        if arg.startswith("--profile="):
+            i += 1
+            continue
         if arg == "--server-uri" and i + 1 < len(raw_args):
             config["server_uri"] = raw_args[i + 1]
             i += 2

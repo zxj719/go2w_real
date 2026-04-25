@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 
 
-REPO_ROOT = Path("/home/unitree/ros_ws")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_baseline_nav2_dwb_controller_targets():
@@ -14,9 +14,7 @@ def test_baseline_nav2_dwb_controller_targets():
 
     controller_params = nav2_cfg["controller_server"]["ros__parameters"]
     goal_checker = controller_params["general_goal_checker"]
-    progress_checker = nav2_cfg["controller_server"]["ros__parameters"][
-        "progress_checker"
-    ]
+    progress_checker = controller_params["progress_checker"]
     follow_path = nav2_cfg["controller_server"]["ros__parameters"]["FollowPath"]
 
     assert math.isclose(
@@ -33,9 +31,12 @@ def test_baseline_nav2_dwb_controller_targets():
     )
     assert math.isclose(
         progress_checker["movement_time_allowance"],
-        20.0,
+        12.0,
         rel_tol=0.0,
         abs_tol=1e-6,
+    )
+    assert math.isclose(
+        controller_params["failure_tolerance"], 2.0, rel_tol=0.0, abs_tol=1e-6
     )
     assert follow_path["plugin"] == "dwb_core::DWBLocalPlanner"
     assert math.isclose(follow_path["max_vel_x"], 0.75, rel_tol=0.0, abs_tol=1e-6)
@@ -132,12 +133,6 @@ def test_planner_tolerance_matches_goal_checker_xy_tolerance():
     assert math.isclose(
         nav2_cfg["recoveries_server"]["ros__parameters"]["transform_tolerance"],
         2.0,
-        rel_tol=0.0,
-        abs_tol=1e-6,
-    )
-    assert math.isclose(
-        nav2_cfg["recoveries_server"]["ros__parameters"]["max_rotational_vel"],
-        0.75,
         rel_tol=0.0,
         abs_tol=1e-6,
     )

@@ -1,8 +1,10 @@
 <!--
   GO2W tuning:
-  - Raise global replanning from the Nav2 Foxy default 1 Hz to 3 Hz so
-    dynamic obstacles show up in the global plan much sooner.
-  - Keep the same recovery structure as the stock Nav2 tree.
+  - Raise global replanning from the Nav2 Foxy default 1 Hz to 2 Hz so
+    dynamic obstacles show up in the global plan sooner without overreacting
+    to brief relocalization / map->odom disturbances.
+  - Prefer immediate spin recovery when localization / map alignment drops,
+    instead of backing up and waiting first.
   - Foxy on this stack does not reliably honor bt_navigator's
     default_server_timeout, so set explicit per-node timeouts here.
 -->
@@ -10,7 +12,7 @@
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="3.0">
+        <RateController hz="2.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased" server_timeout="5000"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap" server_timeout="5000"/>
@@ -26,9 +28,7 @@
         <SequenceStar name="RecoveryActions">
           <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>
           <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap" server_timeout="5000"/>
-          <BackUp server_name="backup" backup_dist="0.20" backup_speed="0.08" server_timeout="5000"/>
-          <Spin spin_dist="1.57" server_timeout="5000"/>
-          <Wait wait_duration="2" server_timeout="5000"/>
+          <Spin spin_dist="0.8" server_timeout="5000"/>
         </SequenceStar>
       </ReactiveFallback>
     </RecoveryNode>

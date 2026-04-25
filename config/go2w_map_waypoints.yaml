@@ -189,8 +189,8 @@ waypoints:
     name: 'wp_14'
     frame_id: 'map'
     position:
-      x: -3.510732
-      y: 9.940794
+      x: -2.544000
+      y: 10.020000
       z: 0.000000
     yaw: -0.039859
     orientation:
