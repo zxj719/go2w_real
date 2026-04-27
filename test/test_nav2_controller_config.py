@@ -104,6 +104,41 @@ def test_nav2_real_hardware_tf_tolerances_are_relaxed_for_rf2o():
     )
 
 
+def test_costmaps_use_filtered_scan_for_dynamic_obstacles():
+    nav2_cfg = yaml.safe_load(
+        (REPO_ROOT / "src/go2w_real/config/nav2_params_foxy.yaml").read_text()
+    )
+
+    for costmap_name in ("local_costmap", "global_costmap"):
+        params = nav2_cfg[costmap_name][costmap_name]["ros__parameters"]
+        obstacle_layer = params["obstacle_layer"]
+
+        assert obstacle_layer["observation_sources"] == "scan"
+        assert obstacle_layer["scan"]["topic"] == "/scan"
+        assert obstacle_layer["scan"]["marking"] is True
+        assert obstacle_layer["scan"]["clearing"] is True
+        assert math.isclose(
+            obstacle_layer["scan"]["min_obstacle_height"],
+            -0.20,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        assert math.isclose(
+            obstacle_layer["scan"]["obstacle_range"],
+            4.0,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        assert math.isclose(
+            obstacle_layer["scan"]["raytrace_range"],
+            4.5,
+            rel_tol=0.0,
+            abs_tol=1e-6,
+        )
+        assert "obstacle_max_range" not in obstacle_layer["scan"]
+        assert "raytrace_max_range" not in obstacle_layer["scan"]
+
+
 def test_planner_tolerance_matches_goal_checker_xy_tolerance():
     nav2_cfg = yaml.safe_load(
         (REPO_ROOT / "src/go2w_real/config/nav2_params_foxy.yaml").read_text()

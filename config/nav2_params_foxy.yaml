@@ -123,17 +123,18 @@ controller_server:
 # Layer strategy (same philosophy as g1_nav):
 #   1. static_layer  — subscribes to /map (live SLAM Toolbox output) so the
 #      controller sees ALL mapped obstacles, not just those in the current
-#      /scan_raw FOV. This prevents driving into obstacles behind or beside the
+#      /scan FOV. This prevents driving into obstacles behind or beside the
 #      robot that have already been mapped.
-#   2. obstacle_layer — subscribes to /scan_raw for dynamic obstacles that SLAM
+#   2. obstacle_layer — subscribes to /scan for dynamic obstacles that SLAM
 #      hasn't integrated yet (people, doors being opened, etc.).
 #   3. inflation_layer — safety buffer around all obstacles.
 #
 # NOTE on VoxelLayer: GO2W's 3D lidar is converted to 2D /scan_raw via
 # pointcloud_to_laserscan (height range [-0.2, 0.4] m). ObstacleLayer with
-# LaserScan is sufficient. If you later want full 3D obstacle detection
-# (e.g., table legs at heights outside the current slice), replace
-# obstacle_layer with VoxelLayer and feed the raw PointCloud2:
+# the filtered /scan output is sufficient for the normal navigation stack. If
+# you later want full 3D obstacle detection (e.g., table legs at heights outside
+# the current slice), replace obstacle_layer with VoxelLayer and feed the raw
+# PointCloud2:
 #
 #   voxel_layer:
 #     plugin: "nav2_costmap_2d::VoxelLayer"
@@ -186,18 +187,17 @@ local_costmap:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
         footprint_clearing_enabled: True
-        observation_sources: scan_raw
-        scan_raw:
-          topic: /scan_raw
+        observation_sources: scan
+        scan:
+          topic: /scan
+          min_obstacle_height: -0.20
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 4.5
-          raytrace_min_range: 0.05
-          obstacle_max_range: 4.0
-          obstacle_min_range: 0.10
+          raytrace_range: 4.5
+          obstacle_range: 4.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0
@@ -209,7 +209,7 @@ local_costmap:
 # -----------------------------------------------------------------------------
 # global_costmap: full map frame for global planning.
 #   static_layer  — SLAM map for known structure
-#   obstacle_layer — /scan_raw for dynamic obstacles so planner re-routes around
+#   obstacle_layer — /scan for dynamic obstacles so planner re-routes around
 #                    objects not yet in the SLAM map
 #   inflation_layer — safety buffer
 # -----------------------------------------------------------------------------
@@ -234,18 +234,17 @@ global_costmap:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
         footprint_clearing_enabled: True
-        observation_sources: scan_raw
-        scan_raw:
-          topic: /scan_raw
+        observation_sources: scan
+        scan:
+          topic: /scan
+          min_obstacle_height: -0.20
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
           inf_is_valid: True
-          raytrace_max_range: 4.5
-          raytrace_min_range: 0.05
-          obstacle_max_range: 4.0
-          obstacle_min_range: 0.10
+          raytrace_range: 4.5
+          obstacle_range: 4.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
