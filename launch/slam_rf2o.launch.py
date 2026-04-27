@@ -192,7 +192,7 @@ def generate_launch_description():
         "slam_map_file",
         default_value=EnvironmentVariable(
             "GO2W_SLAM_MAP_FILE",
-            default_value="/home/unitree/ros_ws/src/map/",
+            default_value="/home/unitree/ros_ws/src/go2w_real/map/",
         ),
         description=(
             "Serialized slam_toolbox map prefix without .data/.posegraph suffix"

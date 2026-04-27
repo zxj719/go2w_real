@@ -37,7 +37,16 @@ def test_headless_config_builds_nav2_and_localization_rewrites():
         "yaw_goal_tolerance": "3.14",
     }
     assert build_localization_param_rewrites(config) == {
-        "do_loop_closing": "false",
+        "do_loop_closing": "true",
+        "link_match_minimum_response_fine": "0.2",
+        "loop_match_minimum_response_coarse": "0.5",
+        "loop_match_minimum_response_fine": "0.6",
+    }
+
+
+def test_headless_localization_rewrite_defaults_keep_loop_closing_enabled():
+    assert build_localization_param_rewrites({}) == {
+        "do_loop_closing": "true",
         "link_match_minimum_response_fine": "0.2",
         "loop_match_minimum_response_coarse": "0.5",
         "loop_match_minimum_response_fine": "0.6",

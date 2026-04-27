@@ -130,10 +130,14 @@ def test_headless_start_script_supports_debug_rosbag_recording():
         text=True,
     )
     script_text = (PACKAGE_ROOT / "scripts/start_navigation_headless.sh").read_text()
+    topics_helper_text = (
+        PACKAGE_ROOT / "scripts/navigation_debug_bag_topics.sh"
+    ).read_text()
 
     assert "record_bag: true" in config_text
     assert "HEADLESS_RECORD_BAG=1" in helper_output
     assert "ros2 bag record" in script_text
     assert "--include-hidden-topics" in script_text
-    assert "/navigate_to_pose/_action/feedback" in script_text
-    assert "/tf" in script_text
+    assert "navigation_debug_bag_topics.sh" in script_text
+    assert "/navigate_to_pose/_action/feedback" in topics_helper_text
+    assert "/tf" in topics_helper_text

@@ -162,7 +162,7 @@ source install/setup.bash
 # 定位/导航，加载已有地图
 ros2 launch go2w_real slam_rf2o.launch.py \
   slam_mode:=localization \
-  slam_map_file:=/home/unitree/ros_ws/src/map/zt_0
+  slam_map_file:=/home/unitree/ros_ws/src/go2w_real/map/zt_0
 
 # 从零建图
 ros2 launch go2w_real slam_rf2o.launch.py \
@@ -216,7 +216,7 @@ Notes:
 
 - `network_interface` defaults to `eth0`, so you do not need to pass it in the normal case
 - only add `network_interface:=...` when your robot is connected through a different NIC
-- `slam_params.yaml` currently loads the serialized SLAM map prefix `/home/unitree/ros_ws/src/map/test_1`
+- `slam_params.yaml` currently loads the serialized SLAM map prefix `/home/unitree/ros_ws/src/go2w_real/map/test_1`
 
 ### 4b. Launch autonomous mapping from scratch
 
@@ -440,9 +440,9 @@ Example:
 
 ```yaml
 map:
-  serialized_prefix: '/home/unitree/ros_ws/src/map/test_1'
-  data: '/home/unitree/ros_ws/src/map/test_1.data'
-  posegraph: '/home/unitree/ros_ws/src/map/test_1.posegraph'
+  serialized_prefix: '/home/unitree/ros_ws/src/go2w_real/map/test_1'
+  data: '/home/unitree/ros_ws/src/go2w_real/map/test_1.data'
+  posegraph: '/home/unitree/ros_ws/src/go2w_real/map/test_1.posegraph'
 waypoints:
   - id: 'POI_001'
     name: 'dock'

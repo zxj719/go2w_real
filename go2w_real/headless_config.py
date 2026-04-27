@@ -80,7 +80,7 @@ def build_nav2_param_rewrites(config):
 def build_localization_param_rewrites(config):
     slam_cfg = config.get("slam_localization") or {}
     return {
-        "do_loop_closing": str(slam_cfg.get("do_loop_closing", False)).lower(),
+        "do_loop_closing": str(slam_cfg.get("do_loop_closing", True)).lower(),
         "link_match_minimum_response_fine": str(
             slam_cfg.get("link_match_minimum_response_fine", 0.2)
         ),

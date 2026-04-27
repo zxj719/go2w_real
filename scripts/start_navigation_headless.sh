@@ -19,37 +19,30 @@ resolve_workspace_dir() {
 
 WS_DIR="${GO2W_WS_DIR:-$(resolve_workspace_dir)}"
 PACKAGE_SRC_DIR="${WS_DIR}/src/go2w_real"
-UNITREE_SETUP="/home/unitree/unitree_ros2/setup.sh"
-XT16_BIN="/unitree/module/unitree_slam/bin/xt16_driver"
-EXECUTOR_BIN="${SCRIPT_DIR}/navigation_executor.py"
-CONFIG_HELPER_BIN="${SCRIPT_DIR}/navigation_headless_config.py"
+ROS_SETUP_FILE="${GO2W_ROS_SETUP_FILE:-/opt/ros/foxy/setup.bash}"
+INSTALL_SETUP_FILE="${GO2W_INSTALL_SETUP_FILE:-${WS_DIR}/install/setup.bash}"
+UNITREE_SETUP="${GO2W_UNITREE_SETUP_FILE:-/home/unitree/unitree_ros2/setup.sh}"
+XT16_BIN="${GO2W_XT16_BIN:-/unitree/module/unitree_slam/bin/xt16_driver}"
+EXECUTOR_BIN="${GO2W_EXECUTOR_BIN:-${SCRIPT_DIR}/navigation_executor.py}"
+CONFIG_HELPER_BIN="${GO2W_CONFIG_HELPER_BIN:-${SCRIPT_DIR}/navigation_headless_config.py}"
+BAG_TOPICS_HELPER="${GO2W_BAG_TOPICS_HELPER:-${SCRIPT_DIR}/navigation_debug_bag_topics.sh}"
 EXECUTOR_LOCK_FILE="/tmp/go2w_navigation_executor.lock"
 HEADLESS_CONFIG_FILE="${GO2W_HEADLESS_CONFIG_FILE:-${WS_DIR}/src/go2w_real/config/navigation_headless.yaml}"
-NAV2_PARAMS_FILE="${PACKAGE_SRC_DIR}/config/nav2_params_foxy.yaml"
-SLAM_LOCALIZATION_PARAMS_FILE="${PACKAGE_SRC_DIR}/config/slam_params.yaml"
+NAV2_PARAMS_FILE="${GO2W_NAV2_PARAMS_FILE:-${PACKAGE_SRC_DIR}/config/nav2_params_foxy.yaml}"
+SLAM_LOCALIZATION_PARAMS_FILE="${GO2W_SLAM_LOCALIZATION_PARAMS_FILE:-${PACKAGE_SRC_DIR}/config/slam_params.yaml}"
+ROS2_BIN="${GO2W_ROS2_BIN:-ros2}"
 HEADLESS_PROFILE="${GO2W_HEADLESS_PROFILE:-}"
 NAV2_WAIT_TIMEOUT_SEC=120
 STOP_TERM_TIMEOUT_SEC=5
 STOP_KILL_TIMEOUT_SEC=2
-BAG_TOPICS=(
-  /tf
-  /tf_static
-  /map
-  /odom
-  /sport_odom
-  /sport_imu
-  /scan
-  /scan_raw
-  /cmd_vel
-  /nav2_cmd_vel_raw
-  /go2w_motion_executor/shadow_cmd_vel
-  /go2w_motion_executor/navigation_status
-  /navigate_to_pose/_action/goal
-  /navigate_to_pose/_action/result
-  /navigate_to_pose/_action/cancel
-  /navigate_to_pose/_action/status
-  /navigate_to_pose/_action/feedback
-)
+
+if [[ ! -f "${BAG_TOPICS_HELPER}" ]]; then
+  echo "[start_nav_headless] missing bag topics helper: ${BAG_TOPICS_HELPER}" >&2
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${BAG_TOPICS_HELPER}"
 
 safe_source() {
   local source_file="$1"
@@ -81,23 +74,61 @@ wait_for_pid_exit() {
   return 0
 }
 
+wait_for_process_group_exit() {
+  local process_group_id="$1"
+  local timeout_sec="${2:-5}"
+  local deadline=$((SECONDS + timeout_sec))
+
+  while kill -0 -- "-${process_group_id}" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  return 0
+}
+
+get_process_group_id() {
+  local pid="$1"
+  ps -o pgid= -p "${pid}" 2>/dev/null | tr -d '[:space:]'
+}
+
 stop_pid_if_running() {
   local pid="$1"
   local label="${2:-process}"
-  local term_timeout_sec="${3:-$STOP_TERM_TIMEOUT_SEC}"
-  local kill_timeout_sec="${4:-$STOP_KILL_TIMEOUT_SEC}"
+  local signal_name="${3:-TERM}"
+  local term_timeout_sec="${4:-$STOP_TERM_TIMEOUT_SEC}"
+  local kill_timeout_sec="${5:-$STOP_KILL_TIMEOUT_SEC}"
+  local use_process_group="${6:-0}"
+  local process_group_id="${pid}"
 
-  if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
-    return 0
+  if [[ "${use_process_group}" == "1" ]]; then
+    if [[ -z "${process_group_id}" ]] || ! kill -0 -- "-${process_group_id}" 2>/dev/null; then
+      return 0
+    fi
+  else
+    if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
+      return 0
+    fi
   fi
 
-  echo "[start_nav_headless] stopping ${label} (pid=${pid})"
-  kill "${pid}" 2>/dev/null || true
-
-  if ! wait_for_pid_exit "${pid}" "${term_timeout_sec}"; then
-    echo "[start_nav_headless] ${label} did not exit after SIGTERM, sending SIGKILL (pid=${pid})" >&2
-    kill -9 "${pid}" 2>/dev/null || true
-    wait_for_pid_exit "${pid}" "${kill_timeout_sec}" || true
+  if [[ "${use_process_group}" == "1" ]]; then
+    echo "[start_nav_headless] stopping ${label} (pgid=${process_group_id}, signal=${signal_name})"
+    kill "-${signal_name}" -- "-${process_group_id}" 2>/dev/null || kill "-${signal_name}" "${pid}" 2>/dev/null || true
+    if ! wait_for_process_group_exit "${process_group_id}" "${term_timeout_sec}"; then
+      echo "[start_nav_headless] ${label} did not exit after SIG${signal_name}, sending SIGKILL (pgid=${process_group_id})" >&2
+      kill -9 -- "-${process_group_id}" 2>/dev/null || kill -9 "${pid}" 2>/dev/null || true
+      wait_for_process_group_exit "${process_group_id}" "${kill_timeout_sec}" || true
+    fi
+  else
+    echo "[start_nav_headless] stopping ${label} (pid=${pid}, signal=${signal_name})"
+    kill "-${signal_name}" "${pid}" 2>/dev/null || true
+    if ! wait_for_pid_exit "${pid}" "${term_timeout_sec}"; then
+      echo "[start_nav_headless] ${label} did not exit after SIG${signal_name}, sending SIGKILL (pid=${pid})" >&2
+      kill -9 "${pid}" 2>/dev/null || true
+      wait_for_pid_exit "${pid}" "${kill_timeout_sec}" || true
+    fi
   fi
 }
 
@@ -117,20 +148,36 @@ cleanup_executor_lock() {
 stop_matching_processes() {
   local matcher=""
   local pid=""
+  local pgid=""
+  local -A stopped_process_groups=()
 
   cleanup_executor_lock
 
   for matcher in "${HEADLESS_CLEANUP_MATCHERS[@]}"; do
     while read -r pid; do
       [[ -z "${pid}" ]] && continue
-      stop_pid_if_running "${pid}" "cleanup matcher '${matcher}'"
+      pgid="$(get_process_group_id "${pid}")"
+      if [[ -n "${pgid}" ]]; then
+        if [[ -n "${stopped_process_groups["${pgid}"]:-}" ]]; then
+          continue
+        fi
+        stopped_process_groups["${pgid}"]=1
+        stop_pid_if_running "${pgid}" "cleanup matcher '${matcher}'" TERM "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" 1
+      else
+        stop_pid_if_running "${pid}" "cleanup matcher '${matcher}'"
+      fi
     done < <(pgrep -f "${matcher}" 2>/dev/null || true)
   done
 
   if [[ -f "${EXECUTOR_LOCK_FILE}" ]]; then
     pid="$(tr -d '[:space:]' < "${EXECUTOR_LOCK_FILE}" 2>/dev/null || true)"
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-      stop_pid_if_running "${pid}" "locked navigation_executor"
+      pgid="$(get_process_group_id "${pid}")"
+      if [[ -n "${pgid}" ]]; then
+        stop_pid_if_running "${pgid}" "locked navigation_executor" TERM "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" 1
+      else
+        stop_pid_if_running "${pid}" "locked navigation_executor"
+      fi
     fi
   fi
 
@@ -213,6 +260,7 @@ STOP_KILL_TIMEOUT_SEC="${HEADLESS_KILL_TIMEOUT_SEC}"
 for required_file in \
   "${HEADLESS_CONFIG_PATH}" \
   "${CONFIG_HELPER_BIN}" \
+  "${BAG_TOPICS_HELPER}" \
   "${WAYPOINT_FILE}" \
   "${SLAM_MAP_PREFIX}.data" \
   "${SLAM_MAP_PREFIX}.posegraph" \
@@ -220,18 +268,19 @@ for required_file in \
   "${SLAM_LOCALIZATION_PARAMS_FILE}" \
   "${XT16_BIN}" \
   "${EXECUTOR_BIN}" \
-  "${WS_DIR}/install/setup.bash"; do
+  "${ROS_SETUP_FILE}" \
+  "${INSTALL_SETUP_FILE}"; do
   if [[ ! -e "${required_file}" ]]; then
     echo "[start_nav_headless] missing required file: ${required_file}" >&2
     exit 1
   fi
 done
 
-safe_source /opt/ros/foxy/setup.bash
+safe_source "${ROS_SETUP_FILE}"
 if [[ -f "${UNITREE_SETUP}" ]]; then
   safe_source "${UNITREE_SETUP}"
 fi
-safe_source "${WS_DIR}/install/setup.bash"
+safe_source "${INSTALL_SETUP_FILE}"
 
 LOG_DIR="${WS_DIR}/log/start_navigation_headless_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "${LOG_DIR}"
@@ -241,6 +290,10 @@ LAUNCH_PID=""
 EXECUTOR_PID=""
 LOG_TAIL_PID=""
 BAG_PID=""
+XT16_USE_PROCESS_GROUP="0"
+LAUNCH_USE_PROCESS_GROUP="0"
+EXECUTOR_USE_PROCESS_GROUP="0"
+BAG_USE_PROCESS_GROUP="0"
 BAG_OUTPUT_DIR="${LOG_DIR}/rosbag_navigation_debug"
 BAG_LOG_FILE="${LOG_DIR}/rosbag_record.log"
 
@@ -249,22 +302,22 @@ cleanup() {
   local lock_pid=""
   trap - EXIT HUP INT QUIT TERM
 
-  stop_pid_if_running "${EXECUTOR_PID}" "navigation_executor"
+  stop_pid_if_running "${EXECUTOR_PID}" "navigation_executor" TERM "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" "${EXECUTOR_USE_PROCESS_GROUP}"
   stop_pid_if_running "${LOG_TAIL_PID}" "executor log tail"
-  stop_pid_if_running "${BAG_PID}" "rosbag recorder"
+  stop_pid_if_running "${BAG_PID}" "rosbag recorder" INT "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" "${BAG_USE_PROCESS_GROUP}"
 
   if [[ -f "${EXECUTOR_LOCK_FILE}" ]]; then
     lock_pid="$(tr -d '[:space:]' < "${EXECUTOR_LOCK_FILE}" 2>/dev/null || true)"
     if [[ -n "${lock_pid}" ]] && kill -0 "${lock_pid}" 2>/dev/null; then
-      stop_pid_if_running "${lock_pid}" "locked navigation_executor"
+      stop_pid_if_running "${lock_pid}" "locked navigation_executor" TERM "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" "${EXECUTOR_USE_PROCESS_GROUP}"
     fi
   fi
 
   cleanup_executor_lock
 
-  stop_pid_if_running "${LAUNCH_PID}" "slam_rf2o.launch.py"
+  stop_pid_if_running "${LAUNCH_PID}" "slam_rf2o.launch.py" INT "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" "${LAUNCH_USE_PROCESS_GROUP}"
 
-  stop_pid_if_running "${XT16_PID}" "xt16_driver"
+  stop_pid_if_running "${XT16_PID}" "xt16_driver" TERM "${STOP_TERM_TIMEOUT_SEC}" "${STOP_KILL_TIMEOUT_SEC}" "${XT16_USE_PROCESS_GROUP}"
 
   exit "${exit_code}"
 }
@@ -284,7 +337,12 @@ echo "[start_nav_headless] logs: ${LOG_DIR}"
 
 stop_matching_processes
 
-"${XT16_BIN}" >"${LOG_DIR}/xt16_driver.log" 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${XT16_BIN}" >"${LOG_DIR}/xt16_driver.log" 2>&1 &
+  XT16_USE_PROCESS_GROUP="1"
+else
+  "${XT16_BIN}" >"${LOG_DIR}/xt16_driver.log" 2>&1 &
+fi
 XT16_PID=$!
 echo "[start_nav_headless] started xt16_driver (pid=${XT16_PID})"
 sleep 2
@@ -294,7 +352,7 @@ if ! kill -0 "${XT16_PID}" 2>/dev/null; then
 fi
 
 LAUNCH_CMD=(
-  ros2 launch go2w_real slam_rf2o.launch.py
+  "${ROS2_BIN}" launch go2w_real slam_rf2o.launch.py
   headless_config_file:="${HEADLESS_CONFIG_PATH}"
   headless_profile:="${HEADLESS_PROFILE}"
   slam_mode:="${HEADLESS_SLAM_MODE}"
@@ -305,7 +363,12 @@ LAUNCH_CMD=(
   nav2_params_file:="${NAV2_PARAMS_FILE}"
   slam_localization_params_file:="${SLAM_LOCALIZATION_PARAMS_FILE}"
 )
-"${LAUNCH_CMD[@]}" >"${LOG_DIR}/slam_rf2o.log" 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${LAUNCH_CMD[@]}" >"${LOG_DIR}/slam_rf2o.log" 2>&1 &
+  LAUNCH_USE_PROCESS_GROUP="1"
+else
+  "${LAUNCH_CMD[@]}" >"${LOG_DIR}/slam_rf2o.log" 2>&1 &
+fi
 LAUNCH_PID=$!
 echo "[start_nav_headless] started slam_rf2o.launch.py (pid=${LAUNCH_PID})"
 
@@ -317,26 +380,36 @@ while (( SECONDS < deadline )); do
     exit 1
   fi
 
-  if ros2 node list 2>/dev/null | grep -qE '(^|/)bt_navigator$'; then
+  if "${ROS2_BIN}" node list 2>/dev/null | grep -qE '(^|/)bt_navigator$'; then
     break
   fi
 
   sleep 1
 done
 
-if ! ros2 node list 2>/dev/null | grep -qE '(^|/)bt_navigator$'; then
+if ! "${ROS2_BIN}" node list 2>/dev/null | grep -qE '(^|/)bt_navigator$'; then
   echo "[start_nav_headless] Nav2 did not become ready within ${NAV2_WAIT_TIMEOUT_SEC}s" >&2
   exit 1
 fi
 
 if [[ "${RECORD_BAG}" == "1" ]]; then
-  printf '%s\n' "${BAG_TOPICS[@]}" > "${LOG_DIR}/rosbag_topics.txt"
-  ros2 bag record \
-    --output "${BAG_OUTPUT_DIR}" \
-    --compression-mode file \
-    --compression-format zstd \
-    --include-hidden-topics \
-    "${BAG_TOPICS[@]}" >"${BAG_LOG_FILE}" 2>&1 &
+  printf '%s\n' "${GO2W_NAVIGATION_DEBUG_BAG_TOPICS[@]}" > "${LOG_DIR}/rosbag_topics.txt"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "${ROS2_BIN}" bag record \
+      --output "${BAG_OUTPUT_DIR}" \
+      --compression-mode file \
+      --compression-format zstd \
+      --include-hidden-topics \
+      "${GO2W_NAVIGATION_DEBUG_BAG_TOPICS[@]}" >"${BAG_LOG_FILE}" 2>&1 &
+    BAG_USE_PROCESS_GROUP="1"
+  else
+    "${ROS2_BIN}" bag record \
+      --output "${BAG_OUTPUT_DIR}" \
+      --compression-mode file \
+      --compression-format zstd \
+      --include-hidden-topics \
+      "${GO2W_NAVIGATION_DEBUG_BAG_TOPICS[@]}" >"${BAG_LOG_FILE}" 2>&1 &
+  fi
   BAG_PID=$!
   echo "[start_nav_headless] started rosbag recorder (pid=${BAG_PID})"
   sleep 2
@@ -360,7 +433,12 @@ EXECUTOR_CMD+=(--heartbeat-interval "${HEADLESS_HEARTBEAT_INTERVAL}")
 EXECUTOR_CMD+=(--reconnect-delay "${HEADLESS_RECONNECT_DELAY}")
 EXECUTOR_CMD+=(--nav-event-timeout "${HEADLESS_NAV_EVENT_TIMEOUT}")
 
-"${EXECUTOR_CMD[@]}" >"${LOG_DIR}/navigation_executor.log" 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${EXECUTOR_CMD[@]}" >"${LOG_DIR}/navigation_executor.log" 2>&1 &
+  EXECUTOR_USE_PROCESS_GROUP="1"
+else
+  "${EXECUTOR_CMD[@]}" >"${LOG_DIR}/navigation_executor.log" 2>&1 &
+fi
 EXECUTOR_PID=$!
 echo "[start_nav_headless] started navigation_executor.py (pid=${EXECUTOR_PID})"
 

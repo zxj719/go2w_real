@@ -1,7 +1,7 @@
 map:
-  serialized_prefix: '/home/unitree/ros_ws/src/map/test_1'
-  data: '/home/unitree/ros_ws/src/map/test_1.data'
-  posegraph: '/home/unitree/ros_ws/src/map/test_1.posegraph'
+  serialized_prefix: '/home/unitree/ros_ws/src/go2w_real/map/test_1'
+  data: '/home/unitree/ros_ws/src/go2w_real/map/test_1.data'
+  posegraph: '/home/unitree/ros_ws/src/go2w_real/map/test_1.posegraph'
 waypoints:
   - id: 'POI_001'
     name: 'wp_01'

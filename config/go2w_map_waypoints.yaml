@@ -1,7 +1,7 @@
 map:
-  serialized_prefix: '/home/unitree/ros_ws/src/map/zt_0'
-  data: '/home/unitree/ros_ws/src/map/zt_0.data'
-  posegraph: '/home/unitree/ros_ws/src/map/zt_0.posegraph'
+  serialized_prefix: '/home/unitree/ros_ws/src/go2w_real/map/zt_0'
+  data: '/home/unitree/ros_ws/src/go2w_real/map/zt_0.data'
+  posegraph: '/home/unitree/ros_ws/src/go2w_real/map/zt_0.posegraph'
 waypoints:
   - id: 'POI_012'
     name: 'wp_00'
@@ -189,8 +189,8 @@ waypoints:
     name: 'wp_14'
     frame_id: 'map'
     position:
-      x: -2.544000
-      y: 10.020000
+      x: -3.15000
+      y: 10.40000
       z: 0.000000
     yaw: -0.039859
     orientation:
@@ -237,3 +237,16 @@ waypoints:
       y: 0.000000
       z: 0.991696
       w: 0.128607
+  - id: 'POI_030'
+    name: 'wp_18'
+    frame_id: 'map'
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.000000
+    yaw: 0.0
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.0
+      w: 0.0

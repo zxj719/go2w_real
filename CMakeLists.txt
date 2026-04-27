@@ -84,7 +84,9 @@ set(package_scripts "")
 foreach(script IN ITEMS
   scripts/go2w_bridge.py
   scripts/go2w_motion_executor.py
+  scripts/navigation_debug_bag_topics.sh
   scripts/navigate_to_waypoint.py
+  scripts/navigate_to_waypoint_with_debug_bag.sh
   scripts/navigation_headless_config.py
   scripts/navigation_executor.py
   scripts/navigation_sender_test_poi001.py
@@ -152,6 +154,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_navigate_to_waypoint
     test/test_navigate_to_waypoint.py
+  )
+  ament_add_pytest_test(
+    test_navigate_to_waypoint_debug_bag
+    test/test_navigate_to_waypoint_debug_bag.py
+  )
+  ament_add_pytest_test(
+    test_wait_for_transform
+    test/test_wait_for_transform.py
   )
   ament_add_pytest_test(
     test_save_map_and_waypoints

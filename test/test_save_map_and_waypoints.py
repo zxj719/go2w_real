@@ -32,9 +32,9 @@ def test_default_waypoint_identity_sequence_starts_from_poi_013():
 def test_serialize_waypoints_yaml_preserves_map_header_and_overwrites_waypoints():
     existing_text = (
         "map:\n"
-        "  serialized_prefix: '/home/unitree/ros_ws/src/map/zt_0'\n"
-        "  data: '/home/unitree/ros_ws/src/map/zt_0.data'\n"
-        "  posegraph: '/home/unitree/ros_ws/src/map/zt_0.posegraph'\n"
+        "  serialized_prefix: '/home/unitree/ros_ws/src/go2w_real/map/zt_0'\n"
+        "  data: '/home/unitree/ros_ws/src/go2w_real/map/zt_0.data'\n"
+        "  posegraph: '/home/unitree/ros_ws/src/go2w_real/map/zt_0.posegraph'\n"
         "waypoints:\n"
         "  - id: 'POI_999'\n"
         "    name: 'old_wp'\n"

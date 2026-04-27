@@ -28,7 +28,7 @@
         <SequenceStar name="RecoveryActions">
           <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>
           <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap" server_timeout="5000"/>
-          <Spin spin_dist="0.8" server_timeout="5000"/>
+          <Spin spin_dist="0.4" server_timeout="5000"/>
         </SequenceStar>
       </ReactiveFallback>
     </RecoveryNode>

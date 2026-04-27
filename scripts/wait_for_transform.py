@@ -15,6 +15,16 @@ from rclpy.time import Time
 import tf2_ros
 
 
+def _parameter_to_float(parameter, name: str) -> float:
+    value = parameter.value
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Parameter '{name}' must be numeric, got {value!r}"
+        ) from exc
+
+
 class WaitForTransform(Node):
     def __init__(self):
         super().__init__("wait_for_transform")
@@ -25,20 +35,19 @@ class WaitForTransform(Node):
         self.declare_parameter("poll_period", 0.2)
         self.declare_parameter("log_period", 2.0)
 
-        self.target_frame = (
-            self.get_parameter("target_frame").get_parameter_value().string_value
+        self.target_frame = str(self.get_parameter("target_frame").value)
+        self.source_frame = str(self.get_parameter("source_frame").value)
+        self.timeout_sec = _parameter_to_float(
+            self.get_parameter("timeout_sec"),
+            "timeout_sec",
         )
-        self.source_frame = (
-            self.get_parameter("source_frame").get_parameter_value().string_value
+        self.poll_period = _parameter_to_float(
+            self.get_parameter("poll_period"),
+            "poll_period",
         )
-        self.timeout_sec = (
-            self.get_parameter("timeout_sec").get_parameter_value().double_value
-        )
-        self.poll_period = (
-            self.get_parameter("poll_period").get_parameter_value().double_value
-        )
-        self.log_period = (
-            self.get_parameter("log_period").get_parameter_value().double_value
+        self.log_period = _parameter_to_float(
+            self.get_parameter("log_period"),
+            "log_period",
         )
 
         self.tf_buffer = tf2_ros.Buffer()
