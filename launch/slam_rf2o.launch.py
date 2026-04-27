@@ -109,7 +109,7 @@ def generate_launch_description():
         pkg_dir, "config", "nav2_params_foxy.yaml"
     )
     odom_fusion_default_params_file = os.path.join(
-        pkg_dir, "config", "odom_fusion_params.yaml"
+        pkg_dir, "config", "odom_fusion_lowstate_rf2o.yaml"
     )
     motion_executor_params_file = os.path.join(
         pkg_dir, "config", "go2w_motion_executor.yaml"
@@ -222,10 +222,10 @@ def generate_launch_description():
     )
     declare_use_odom_fusion = DeclareLaunchArgument(
         "use_odom_fusion",
-        default_value="false",
+        default_value="true",
         description=(
             "Default false keeps /odom on RF2O odom only; set true to publish "
-            "/odom from robot_localization EKF fused from /sport_odom + /sport_imu"
+            "/odom from robot_localization EKF fused from /rf2o/odom + corrected IMU"
         ),
     )
     declare_odom_fusion_params_file = DeclareLaunchArgument(
@@ -425,6 +425,46 @@ def generate_launch_description():
         output="screen",
     )
 
+    lowstate_imu_bridge = Node(
+        package="go2w_real",
+        executable="lowstate_imu_bridge.py",
+        name="lowstate_imu_bridge",
+        output="screen",
+        parameters=[
+            {
+                "source_topic": "/lowstate",
+                "imu_topic": "/lowstate_imu",
+                "frame_id": "imu",
+                "gyro_bias": [0.0, -0.00207, -0.00902],
+                "publish_rate_limit_hz": 100.0,
+                "orientation_covariance_yaw": 0.05,
+                "angular_velocity_covariance_z": 0.04,
+                "linear_acceleration_covariance": 100.0,
+            }
+        ],
+        condition=IfCondition(use_odom_fusion),
+    )
+
+    utlidar_imu_adapter = Node(
+        package="go2w_real",
+        executable="utlidar_imu_adapter.py",
+        name="utlidar_imu_adapter",
+        output="screen",
+        parameters=[
+            {
+                "input_topic": "/utlidar/imu",
+                "output_topic": "/utlidar_imu_base",
+                "frame_id": "imu",
+                # Turn tests showed utlidar_imu.z is opposite base yaw.
+                "axis_signs": [1.0, 1.0, -1.0],
+                "orientation_covariance_yaw": 999.0,
+                "angular_velocity_covariance_z": 0.02,
+                "linear_acceleration_covariance": 100.0,
+            }
+        ],
+        condition=IfCondition(use_odom_fusion),
+    )
+
     rf2o_node = Node(
         package="rf2o_laser_odometry",
         executable="rf2o_laser_odometry_node",
@@ -445,6 +485,26 @@ def generate_launch_description():
             }
         ],
         condition=UnlessCondition(use_odom_fusion),
+    )
+
+    rf2o_fusion_input_node = Node(
+        package="rf2o_laser_odometry",
+        executable="rf2o_laser_odometry_node",
+        name="rf2o_fusion_input_node",
+        output="screen",
+        arguments=["--ros-args", "--log-level", "warn"],
+        parameters=[
+            {
+                "laser_scan_topic": "/scan",
+                "odom_topic": "/rf2o/odom",
+                "publish_tf": False,
+                "base_frame_id": "base",
+                "odom_frame_id": "odom",
+                "init_pose_from_topic": "",
+                "freq": 9.0,
+            }
+        ],
+        condition=IfCondition(use_odom_fusion),
     )
 
     odom_fusion_node = Node(
@@ -719,7 +779,7 @@ def generate_launch_description():
             "  - Robot must already be standing before motion commands are sent\n"
             "  - /odom defaults to RF2O odom only\n"
             "  - Set use_odom_fusion:=true to enable robot_localization EKF "
-            "from /sport_odom + /sport_imu\n"
+            "from /rf2o/odom + /lowstate_imu + /utlidar_imu_base\n"
             "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
             "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
             "\n========================================\n",
@@ -759,7 +819,10 @@ def generate_launch_description():
             pointcloud_relay,
             pointcloud_to_scan,
             scan_filter,
+            lowstate_imu_bridge,
+            utlidar_imu_adapter,
             rf2o_node,
+            rf2o_fusion_input_node,
             odom_fusion_node,
             wait_for_odom_to_lidar_tf,
             wait_for_map_to_lidar_tf,

@@ -65,7 +65,16 @@ def test_headless_config_builds_executor_settings_from_selected_profile():
     assert executor["waypoint_file"].endswith("go2w_waypoints.yaml")
     assert executor["show_logs"] is True
     assert executor["record_bag"] is True
-    assert executor["use_odom_fusion"] is False
+    assert executor["use_odom_fusion"] is True
+
+
+def test_headless_config_builds_executor_settings_from_14_1_profile():
+    config = load_headless_config(DEFAULT_HEADLESS_CONFIG_PATH)
+    executor = build_executor_settings(config, "14_1")
+
+    assert executor["profile"] == "14_1"
+    assert executor["waypoint_file"].endswith("go2w_waypoints.yaml")
+    assert executor["slam_map_file"].endswith("/map/14_1")
 
 
 def test_resolve_headless_profile_rejects_unknown_profile(tmp_path):

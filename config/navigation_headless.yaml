@@ -4,9 +4,12 @@ profiles:
   zt_0:
     waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_map_waypoints.yaml
     slam_map_file: /home/unitree/ros_ws/src/go2w_real/map/zt_0
+  '14_1':
+    waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml
+    slam_map_file: /home/unitree/ros_ws/src/go2w_real/map/14_1
   test_1:
     waypoint_file: /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml
-    slam_map_file: /home/unitree/ros_ws/src/go2w_real/map/test_1
+    slam_map_file: /home/unitree/ros_ws/src/go2w_real/map/14_1
 
 cleanup:
   process_matchers:
@@ -20,7 +23,7 @@ launch:
   network_interface: eth0
   use_rviz: false
   slam_mode: localization
-  use_odom_fusion: false
+  use_odom_fusion: true
   nav2_wait_timeout_sec: 120
 
 nav2:

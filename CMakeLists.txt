@@ -84,6 +84,7 @@ set(package_scripts "")
 foreach(script IN ITEMS
   scripts/go2w_bridge.py
   scripts/go2w_motion_executor.py
+  scripts/lowstate_imu_bridge.py
   scripts/navigation_debug_bag_topics.sh
   scripts/navigate_to_waypoint.py
   scripts/navigate_to_waypoint_with_debug_bag.sh
@@ -96,6 +97,7 @@ foreach(script IN ITEMS
   scripts/emergency_stop.py
   scripts/start_navigation_headless.sh
   scripts/start_navigation_no_server.sh
+  scripts/utlidar_imu_adapter.py
   scripts/wait_for_transform.py
 )
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${script}")
@@ -140,6 +142,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_odom_fusion_config
     test/test_odom_fusion_config.py
+  )
+  ament_add_pytest_test(
+    test_imu_fusion_bridges
+    test/test_imu_fusion_bridges.py
   )
   ament_add_pytest_test(
     test_navigation_executor

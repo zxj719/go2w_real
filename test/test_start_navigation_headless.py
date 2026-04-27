@@ -35,7 +35,7 @@ def test_headless_config_cli_prints_shell_assignments():
         "HEADLESS_SERVER_URI=ws://192.168.123.186:8100/ws/navigation/executor"
         in output
     )
-    assert "HEADLESS_USE_ODOM_FUSION=0" in output
+    assert "HEADLESS_USE_ODOM_FUSION=1" in output
     assert "HEADLESS_RECORD_BAG=1" in output
 
 

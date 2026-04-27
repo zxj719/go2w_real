@@ -200,6 +200,10 @@ Options:
   --profile NAME    Headless config profile name, default: config default_profile
   -h, --help        Show this help
 
+Default config profiles:
+  zt_0    go2w_map_waypoints.yaml + map/zt_0
+  14_1    go2w_waypoints.yaml + map/14_1
+
 Environment overrides:
   GO2W_HEADLESS_CONFIG_FILE
   GO2W_HEADLESS_PROFILE

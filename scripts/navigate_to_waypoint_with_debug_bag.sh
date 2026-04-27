@@ -116,7 +116,9 @@ Stops recording automatically when navigation exits.
 
 Wrapper options:
   --no-bringup                 Skip xt16_driver + slam_rf2o bringup and only do bag + navigate
-  --slam-map-file PATH        Map prefix for slam_rf2o localization, default: /home/unitree/ros_ws/src/go2w_real/map/zt_0
+  --profile NAME              Navigation preset: zt_0 / 14_1, default: zt_0
+  --waypoint-file PATH        Waypoint YAML for navigate_to_waypoint.py
+  --slam-map-file PATH        Map prefix for slam_rf2o localization
   --slam-mode MODE            slam_rf2o slam_mode value, default: localization
   --nav-ready-timeout SEC     Wait timeout for bt_navigator readiness, default: 120
   --tf-ready-timeout SEC      Wait timeout for TF map <- base readiness, default: 30
@@ -137,6 +139,8 @@ Environment overrides:
   GO2W_NAVIGATE_BIN
   GO2W_ROS2_BIN
   GO2W_XT16_BIN
+  GO2W_NAV_PROFILE
+  GO2W_WAYPOINT_FILE
   GO2W_SLAM_MAP_FILE
   GO2W_SLAM_MODE
   GO2W_SKIP_BRINGUP
@@ -162,7 +166,9 @@ UNITREE_SETUP_FILE="${GO2W_UNITREE_SETUP_FILE-/home/unitree/unitree_ros2/setup.s
 NAVIGATE_BIN="${GO2W_NAVIGATE_BIN:-${PACKAGE_SRC_DIR}/scripts/navigate_to_waypoint.py}"
 ROS2_BIN="${GO2W_ROS2_BIN:-ros2}"
 XT16_BIN="${GO2W_XT16_BIN:-/unitree/module/unitree_slam/bin/xt16_driver}"
-SLAM_MAP_FILE="${GO2W_SLAM_MAP_FILE:-${WS_DIR}/src/map/zt_0}"
+NAV_PROFILE="${GO2W_NAV_PROFILE:-zt_0}"
+WAYPOINT_FILE="${GO2W_WAYPOINT_FILE:-}"
+SLAM_MAP_FILE="${GO2W_SLAM_MAP_FILE:-}"
 SLAM_MODE="${GO2W_SLAM_MODE:-localization}"
 START_BRINGUP="1"
 WAIT_FOR_NAV_READY="1"
@@ -189,6 +195,35 @@ BAG_USE_PROCESS_GROUP="0"
 XT16_USE_PROCESS_GROUP="0"
 LAUNCH_USE_PROCESS_GROUP="0"
 
+apply_navigation_profile_defaults() {
+  local profile_name="$1"
+  local profile_waypoint_file=""
+  local profile_slam_map_file=""
+
+  case "${profile_name}" in
+    zt_0)
+      profile_waypoint_file="${PACKAGE_SRC_DIR}/config/go2w_map_waypoints.yaml"
+      profile_slam_map_file="${PACKAGE_SRC_DIR}/map/zt_0"
+      ;;
+    14_1)
+      profile_waypoint_file="${PACKAGE_SRC_DIR}/config/go2w_waypoints.yaml"
+      profile_slam_map_file="${PACKAGE_SRC_DIR}/map/14_1"
+      ;;
+    *)
+      echo "[navigate_debug_bag] unknown navigation profile: ${profile_name}" >&2
+      print_help >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ -z "${WAYPOINT_FILE}" ]]; then
+    WAYPOINT_FILE="${profile_waypoint_file}"
+  fi
+  if [[ -z "${SLAM_MAP_FILE}" ]]; then
+    SLAM_MAP_FILE="${profile_slam_map_file}"
+  fi
+}
+
 if [[ "${GO2W_SKIP_BRINGUP:-0}" == "1" ]]; then
   START_BRINGUP="0"
 fi
@@ -207,6 +242,32 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-bringup)
       START_BRINGUP="0"
+      shift
+      ;;
+    --profile)
+      NAV_PROFILE="${2:-}"
+      if [[ -z "${NAV_PROFILE}" ]]; then
+        echo "[navigate_debug_bag] --profile requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --profile=*)
+      NAV_PROFILE="${1#*=}"
+      shift
+      ;;
+    --waypoint-file)
+      WAYPOINT_FILE="${2:-}"
+      if [[ -z "${WAYPOINT_FILE}" ]]; then
+        echo "[navigate_debug_bag] --waypoint-file requires a value" >&2
+        exit 1
+      fi
+      NAVIGATE_ARGS+=("$1" "$2")
+      shift 2
+      ;;
+    --waypoint-file=*)
+      WAYPOINT_FILE="${1#*=}"
+      NAVIGATE_ARGS+=("$1")
       shift
       ;;
     --slam-map-file)
@@ -317,6 +378,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+apply_navigation_profile_defaults "${NAV_PROFILE}"
+
 if [[ ! -f "${BAG_TOPICS_HELPER}" ]]; then
   echo "[navigate_debug_bag] missing bag topics helper: ${BAG_TOPICS_HELPER}" >&2
   exit 1
@@ -329,6 +392,7 @@ for required_file in \
   "${BAG_TOPICS_HELPER}" \
   "${ROS_SETUP_FILE}" \
   "${INSTALL_SETUP_FILE}" \
+  "${WAYPOINT_FILE}" \
   "${NAVIGATE_BIN}"; do
   if [[ ! -e "${required_file}" ]]; then
     echo "[navigate_debug_bag] missing required file: ${required_file}" >&2
@@ -451,6 +515,9 @@ if [[ "${START_BRINGUP}" == "1" ]]; then
   fi
 fi
 
+echo "[navigate_debug_bag] profile: ${NAV_PROFILE}"
+echo "[navigate_debug_bag] waypoint file: ${WAYPOINT_FILE}"
+
 if command -v setsid >/dev/null 2>&1; then
   setsid "${ROS2_BIN}" bag record \
     -o "${BAG_OUTPUT_DIR}" \
@@ -478,7 +545,7 @@ if ! kill -0 "${BAG_PID}" 2>/dev/null; then
 fi
 
 echo "[navigate_debug_bag] rosbag is recording. You can choose a waypoint now."
-if "${NAVIGATE_BIN}" "${NAVIGATE_ARGS[@]}"; then
+if GO2W_WAYPOINT_FILE="${WAYPOINT_FILE}" "${NAVIGATE_BIN}" "${NAVIGATE_ARGS[@]}"; then
   nav_exit_code=0
 else
   nav_exit_code=$?

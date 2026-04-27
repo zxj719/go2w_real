@@ -422,6 +422,127 @@ raise SystemExit(0)
     assert (bag_output_dir / "bag").is_dir()
 
 
+def test_debug_bag_wrapper_14_1_profile_selects_matching_map_and_waypoints(tmp_path):
+    events_file = tmp_path / "events.log"
+    ready_file = tmp_path / "bt_navigator.ready"
+    ros_setup = tmp_path / "ros_setup.bash"
+    install_setup = tmp_path / "install_setup.bash"
+    navigate_bin = tmp_path / "fake_navigate_to_waypoint.sh"
+    ros2_bin = tmp_path / "fake_ros2.py"
+    xt16_bin = tmp_path / "fake_xt16.py"
+    bag_output_dir = tmp_path / "bag_output"
+
+    ros_setup.write_text("")
+    install_setup.write_text("")
+    _write_executable(
+        navigate_bin,
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'navigate_waypoint_file:%s\\n' "${GO2W_WAYPOINT_FILE:-}" >> "${EVENTS_FILE}"
+printf 'navigate_started:%s\\n' "$*" >> "${EVENTS_FILE}"
+""",
+    )
+    _write_executable(
+        xt16_bin,
+        """#!/usr/bin/env python3
+import signal
+import time
+
+signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+signal.signal(signal.SIGINT, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+
+while True:
+    time.sleep(0.1)
+""",
+    )
+    _write_executable(
+        ros2_bin,
+        """#!/usr/bin/env python3
+import os
+import signal
+import sys
+import time
+
+events_file = os.environ["EVENTS_FILE"]
+ready_file = os.environ["READY_FILE"]
+args = sys.argv[1:]
+
+if args[:2] == ["node", "list"]:
+    if os.path.exists(ready_file):
+        print("/bt_navigator")
+    raise SystemExit(0)
+
+if args and args[0] == "launch":
+    with open(events_file, "a", encoding="utf-8") as handle:
+        handle.write(f"ros2_launch_invoked:{' '.join(args)}\\n")
+    with open(ready_file, "w", encoding="utf-8") as handle:
+        handle.write("ready\\n")
+
+    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+    signal.signal(signal.SIGINT, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+
+    while True:
+        time.sleep(0.1)
+
+if args and args[0] == "bag":
+    output_dir = ""
+    for index, arg in enumerate(args[:-1]):
+        if arg == "-o":
+            output_dir = args[index + 1]
+            break
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+    signal.signal(signal.SIGINT, lambda signum, frame: (_ for _ in ()).throw(SystemExit(0)))
+
+    while True:
+        time.sleep(0.1)
+
+raise SystemExit(0)
+""",
+    )
+
+    env = os.environ.copy()
+    env["EVENTS_FILE"] = str(events_file)
+    env["READY_FILE"] = str(ready_file)
+    env["GO2W_ROS_SETUP_FILE"] = str(ros_setup)
+    env["GO2W_INSTALL_SETUP_FILE"] = str(install_setup)
+    env["GO2W_UNITREE_SETUP_FILE"] = ""
+    env["GO2W_NAVIGATE_BIN"] = str(navigate_bin)
+    env["GO2W_ROS2_BIN"] = str(ros2_bin)
+    env["GO2W_XT16_BIN"] = str(xt16_bin)
+    env["GO2W_DEBUG_BAG_OUTPUT_DIR"] = str(bag_output_dir)
+    env["GO2W_XT16_WARMUP_SEC"] = "0"
+    env["GO2W_NAV_READY_TIMEOUT_SEC"] = "5"
+    env["GO2W_SKIP_TF_READY_WAIT"] = "1"
+
+    subprocess.check_call(
+        [
+            "bash",
+            str(WRAPPER_SCRIPT),
+            "--profile",
+            "14_1",
+            "--waypoint",
+            "POI_001",
+        ],
+        env=env,
+    )
+
+    event_lines = events_file.read_text().splitlines()
+    expected_map_prefix = PACKAGE_ROOT / "map/14_1"
+    expected_waypoint_file = PACKAGE_ROOT / "config/go2w_waypoints.yaml"
+
+    assert any(
+        line.startswith("ros2_launch_invoked:launch go2w_real slam_rf2o.launch.py ")
+        and f"slam_map_file:={expected_map_prefix}" in line
+        for line in event_lines
+    )
+    assert f"navigate_waypoint_file:{expected_waypoint_file}" in event_lines
+    assert "navigate_started:--waypoint POI_001" in event_lines
+
+
 def test_debug_bag_wrapper_waits_for_tf_ready_before_navigation(tmp_path):
     events_file = tmp_path / "events.log"
     ready_file = tmp_path / "bt_navigator.ready"
