@@ -91,6 +91,7 @@ foreach(script IN ITEMS
   scripts/navigation_headless_config.py
   scripts/navigation_executor.py
   scripts/navigation_sender_test_poi001.py
+  scripts/odom_imu_motion_test.py
   scripts/profile_nav_stack.py
   scripts/pointcloud_relay.py
   scripts/save_map_and_waypoints.py
@@ -144,6 +145,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_odom_fusion_config
     test/test_odom_fusion_config.py
+  )
+  ament_add_pytest_test(
+    test_odom_imu_motion_test
+    test/test_odom_imu_motion_test.py
   )
   ament_add_pytest_test(
     test_imu_fusion_bridges
