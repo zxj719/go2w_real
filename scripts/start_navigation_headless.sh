@@ -31,10 +31,27 @@ HEADLESS_CONFIG_FILE="${GO2W_HEADLESS_CONFIG_FILE:-${WS_DIR}/src/go2w_real/confi
 NAV2_PARAMS_FILE="${GO2W_NAV2_PARAMS_FILE:-${PACKAGE_SRC_DIR}/config/nav2_params_foxy.yaml}"
 SLAM_LOCALIZATION_PARAMS_FILE="${GO2W_SLAM_LOCALIZATION_PARAMS_FILE:-${PACKAGE_SRC_DIR}/config/slam_params.yaml}"
 ROS2_BIN="${GO2W_ROS2_BIN:-ros2}"
+WAIT_FOR_TF_BIN="${GO2W_WAIT_FOR_TF_BIN:-${PACKAGE_SRC_DIR}/scripts/wait_for_transform.py}"
+WAIT_FOR_SCAN_HEALTH_BIN="${GO2W_WAIT_FOR_SCAN_HEALTH_BIN:-${PACKAGE_SRC_DIR}/scripts/wait_for_topic_rate.py}"
 HEADLESS_PROFILE="${GO2W_HEADLESS_PROFILE:-}"
 NAV2_WAIT_TIMEOUT_SEC=120
 STOP_TERM_TIMEOUT_SEC=5
 STOP_KILL_TIMEOUT_SEC=2
+WAIT_FOR_TF_READY="1"
+WAIT_FOR_SCAN_READY="1"
+WAIT_FOR_XT16_READY="1"
+TF_READY_TIMEOUT_SEC="${GO2W_TF_READY_TIMEOUT_SEC:-30.0}"
+SCAN_READY_TIMEOUT_SEC="${GO2W_SCAN_READY_TIMEOUT_SEC:-20.0}"
+SCAN_READY_MIN_HZ="${GO2W_SCAN_READY_MIN_HZ:-4.0}"
+SCAN_READY_WINDOW_SEC="${GO2W_SCAN_READY_WINDOW_SEC:-2.0}"
+SCAN_READY_MIN_SAMPLES="${GO2W_SCAN_READY_MIN_SAMPLES:-5}"
+XT16_READY_TIMEOUT_SEC="${GO2W_XT16_READY_TIMEOUT_SEC:-10.0}"
+XT16_READY_MIN_HZ="${GO2W_XT16_READY_MIN_HZ:-8.0}"
+XT16_READY_WINDOW_SEC="${GO2W_XT16_READY_WINDOW_SEC:-2.0}"
+XT16_READY_MIN_SAMPLES="${GO2W_XT16_READY_MIN_SAMPLES:-5}"
+XT16_POINT_TOPIC="${GO2W_XT16_POINT_TOPIC:-/unitree/slam_lidar/points}"
+TF_TARGET_FRAME="${GO2W_MAP_FRAME:-map}"
+TF_SOURCE_FRAME="${GO2W_BASE_FRAME:-base}"
 
 if [[ ! -f "${BAG_TOPICS_HELPER}" ]]; then
   echo "[start_nav_headless] missing bag topics helper: ${BAG_TOPICS_HELPER}" >&2
@@ -191,9 +208,10 @@ Usage: start_navigation_headless.sh [options]
 Starts the full headless navigation stack from a unified YAML config:
   1. cleanup stale managed processes
   2. xt16_driver
-  3. ros2 launch go2w_real slam_rf2o.launch.py ...
-  4. wait for bt_navigator
-  5. navigation_executor.py
+  3. wait for healthy /unitree/slam_lidar/points
+  4. ros2 launch go2w_real slam_rf2o.launch.py ...
+  5. wait for bt_navigator, TF map <- base, and healthy /scan
+  6. navigation_executor.py
 
 Options:
   --config PATH     Unified headless config YAML
@@ -207,6 +225,14 @@ Default config profiles:
 Environment overrides:
   GO2W_HEADLESS_CONFIG_FILE
   GO2W_HEADLESS_PROFILE
+  GO2W_SKIP_XT16_READY_WAIT
+  GO2W_SKIP_TF_READY_WAIT
+  GO2W_SKIP_SCAN_READY_WAIT
+  GO2W_XT16_READY_TIMEOUT_SEC
+  GO2W_XT16_READY_MIN_HZ
+  GO2W_SCAN_READY_TIMEOUT_SEC
+  GO2W_SCAN_READY_MIN_HZ
+  GO2W_TF_READY_TIMEOUT_SEC
 EOF
 }
 
@@ -261,6 +287,16 @@ NAV2_WAIT_TIMEOUT_SEC="${HEADLESS_NAV2_WAIT_TIMEOUT_SEC}"
 STOP_TERM_TIMEOUT_SEC="${HEADLESS_TERM_TIMEOUT_SEC}"
 STOP_KILL_TIMEOUT_SEC="${HEADLESS_KILL_TIMEOUT_SEC}"
 
+if [[ "${GO2W_SKIP_TF_READY_WAIT:-0}" == "1" ]]; then
+  WAIT_FOR_TF_READY="0"
+fi
+if [[ "${GO2W_SKIP_SCAN_READY_WAIT:-0}" == "1" ]]; then
+  WAIT_FOR_SCAN_READY="0"
+fi
+if [[ "${GO2W_SKIP_XT16_READY_WAIT:-0}" == "1" ]]; then
+  WAIT_FOR_XT16_READY="0"
+fi
+
 for required_file in \
   "${HEADLESS_CONFIG_PATH}" \
   "${CONFIG_HELPER_BIN}" \
@@ -279,6 +315,19 @@ for required_file in \
     exit 1
   fi
 done
+
+if [[ "${WAIT_FOR_TF_READY}" == "1" && ! -e "${WAIT_FOR_TF_BIN}" ]]; then
+  echo "[start_nav_headless] missing TF wait helper: ${WAIT_FOR_TF_BIN}" >&2
+  exit 1
+fi
+if [[ "${WAIT_FOR_SCAN_READY}" == "1" && ! -e "${WAIT_FOR_SCAN_HEALTH_BIN}" ]]; then
+  echo "[start_nav_headless] missing scan health wait helper: ${WAIT_FOR_SCAN_HEALTH_BIN}" >&2
+  exit 1
+fi
+if [[ "${WAIT_FOR_XT16_READY}" == "1" && ! -e "${WAIT_FOR_SCAN_HEALTH_BIN}" ]]; then
+  echo "[start_nav_headless] missing topic-rate wait helper: ${WAIT_FOR_SCAN_HEALTH_BIN}" >&2
+  exit 1
+fi
 
 safe_source "${ROS_SETUP_FILE}"
 if [[ -f "${UNITREE_SETUP}" ]]; then
@@ -300,6 +349,9 @@ EXECUTOR_USE_PROCESS_GROUP="0"
 BAG_USE_PROCESS_GROUP="0"
 BAG_OUTPUT_DIR="${LOG_DIR}/rosbag_navigation_debug"
 BAG_LOG_FILE="${LOG_DIR}/rosbag_record.log"
+TF_WAIT_LOG_FILE="${LOG_DIR}/wait_for_tf.log"
+SCAN_WAIT_LOG_FILE="${LOG_DIR}/wait_for_scan.log"
+XT16_WAIT_LOG_FILE="${LOG_DIR}/wait_for_xt16_points.log"
 
 cleanup() {
   local exit_code=$?
@@ -328,6 +380,55 @@ cleanup() {
 
 trap cleanup EXIT HUP INT QUIT TERM
 
+wait_for_xt16_points_ready() {
+  echo "[start_nav_headless] waiting for ${XT16_POINT_TOPIC} >= ${XT16_READY_MIN_HZ} Hz..."
+  if ! "${WAIT_FOR_SCAN_HEALTH_BIN}" \
+    --ros-args \
+    -p "topic:=${XT16_POINT_TOPIC}" \
+    -p "topic_type:=sensor_msgs/msg/PointCloud2" \
+    -p "min_rate_hz:=${XT16_READY_MIN_HZ}" \
+    -p "min_samples:=${XT16_READY_MIN_SAMPLES}" \
+    -p "window_sec:=${XT16_READY_WINDOW_SEC}" \
+    -p "timeout_sec:=${XT16_READY_TIMEOUT_SEC}" \
+    -p "log_period:=2.0" >"${XT16_WAIT_LOG_FILE}" 2>&1; then
+    echo "[start_nav_headless] ${XT16_POINT_TOPIC} did not reach ${XT16_READY_MIN_HZ} Hz within ${XT16_READY_TIMEOUT_SEC}s, check ${XT16_WAIT_LOG_FILE}" >&2
+    exit 1
+  fi
+  echo "[start_nav_headless] ${XT16_POINT_TOPIC} is healthy."
+}
+
+wait_for_tf_ready() {
+  echo "[start_nav_headless] waiting for TF ${TF_TARGET_FRAME} <- ${TF_SOURCE_FRAME}..."
+  if ! "${WAIT_FOR_TF_BIN}" \
+    --ros-args \
+    -p "target_frame:=${TF_TARGET_FRAME}" \
+    -p "source_frame:=${TF_SOURCE_FRAME}" \
+    -p "timeout_sec:=${TF_READY_TIMEOUT_SEC}" \
+    -p "poll_period:=0.2" \
+    -p "log_period:=2.0" >"${TF_WAIT_LOG_FILE}" 2>&1; then
+    echo "[start_nav_headless] TF ${TF_TARGET_FRAME} <- ${TF_SOURCE_FRAME} did not become ready within ${TF_READY_TIMEOUT_SEC}s, check ${TF_WAIT_LOG_FILE}" >&2
+    exit 1
+  fi
+  echo "[start_nav_headless] TF ${TF_TARGET_FRAME} <- ${TF_SOURCE_FRAME} is ready."
+}
+
+wait_for_scan_ready() {
+  echo "[start_nav_headless] waiting for /scan >= ${SCAN_READY_MIN_HZ} Hz..."
+  if ! "${WAIT_FOR_SCAN_HEALTH_BIN}" \
+    --ros-args \
+    -p "topic:=/scan" \
+    -p "topic_type:=sensor_msgs/msg/LaserScan" \
+    -p "min_rate_hz:=${SCAN_READY_MIN_HZ}" \
+    -p "min_samples:=${SCAN_READY_MIN_SAMPLES}" \
+    -p "window_sec:=${SCAN_READY_WINDOW_SEC}" \
+    -p "timeout_sec:=${SCAN_READY_TIMEOUT_SEC}" \
+    -p "log_period:=2.0" >"${SCAN_WAIT_LOG_FILE}" 2>&1; then
+    echo "[start_nav_headless] /scan did not reach ${SCAN_READY_MIN_HZ} Hz within ${SCAN_READY_TIMEOUT_SEC}s, check ${SCAN_WAIT_LOG_FILE}" >&2
+    exit 1
+  fi
+  echo "[start_nav_headless] /scan rate is healthy."
+}
+
 echo "[start_nav_headless] profile: ${HEADLESS_PROFILE}"
 echo "[start_nav_headless] waypoint file: ${WAYPOINT_FILE}"
 echo "[start_nav_headless] slam map prefix: ${SLAM_MAP_PREFIX}"
@@ -353,6 +454,9 @@ sleep 2
 if ! kill -0 "${XT16_PID}" 2>/dev/null; then
   echo "[start_nav_headless] xt16_driver exited early, check ${LOG_DIR}/xt16_driver.log" >&2
   exit 1
+fi
+if [[ "${WAIT_FOR_XT16_READY}" == "1" ]]; then
+  wait_for_xt16_points_ready
 fi
 
 LAUNCH_CMD=(
@@ -394,6 +498,12 @@ done
 if ! "${ROS2_BIN}" node list 2>/dev/null | grep -qE '(^|/)bt_navigator$'; then
   echo "[start_nav_headless] Nav2 did not become ready within ${NAV2_WAIT_TIMEOUT_SEC}s" >&2
   exit 1
+fi
+if [[ "${WAIT_FOR_TF_READY}" == "1" ]]; then
+  wait_for_tf_ready
+fi
+if [[ "${WAIT_FOR_SCAN_READY}" == "1" ]]; then
+  wait_for_scan_ready
 fi
 
 if [[ "${RECORD_BAG}" == "1" ]]; then
