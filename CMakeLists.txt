@@ -68,7 +68,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
 endif()
 
 set(package_share_dirs "")
-foreach(dir IN ITEMS config launch urdf meshes rviz behavior_trees)
+foreach(dir IN ITEMS config launch urdf meshes rviz behavior_trees map)
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${dir}")
     list(APPEND package_share_dirs "${dir}")
   endif()
@@ -99,6 +99,8 @@ foreach(script IN ITEMS
   scripts/start_navigation_no_server.sh
   scripts/utlidar_imu_adapter.py
   scripts/wait_for_transform.py
+  scripts/wait_for_topic_rate.py
+  scripts/xt16_driver_timefix.sh
 )
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${script}")
     list(APPEND package_scripts "${script}")

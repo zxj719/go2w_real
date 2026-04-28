@@ -13,9 +13,11 @@
 # Accepts the same preset/map/network overrides as start_navigation_headless.sh.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_DIR="/home/unitree/ros_ws"
 UNITREE_SETUP="/home/unitree/unitree_ros2/setup.sh"
-XT16_BIN="/unitree/module/unitree_slam/bin/xt16_driver"
+XT16_BIN="${GO2W_XT16_BIN:-${SCRIPT_DIR}/xt16_driver_timefix.sh}"
+XT16_PROCESS_MATCHER="${GO2W_XT16_PROCESS_MATCHER:-${XT16_BIN}|/unitree/module/unitree_slam/bin/xt16_driver_go2w_timefix|/unitree/module/unitree_slam/bin/xt16_driver}"
 DEFAULT_PRESET="zt_0"
 DEFAULT_NETWORK_INTERFACE="eth0"
 NAV2_WAIT_TIMEOUT_SEC=120
@@ -74,8 +76,8 @@ Steps:
   3. wait for Nav2 bt_navigator
 
 Map presets:
-  zt_0    Default. /home/unitree/ros_ws/src/map/zt_0
-  test_1  /home/unitree/ros_ws/src/map/test_1
+  zt_0    Default. /home/unitree/ros_ws/src/go2w_real/map/zt_0
+  test_1  /home/unitree/ros_ws/src/go2w_real/map/14_1
 
 Options:
   --preset NAME            Preset name: zt_0 / test_1
@@ -95,10 +97,10 @@ apply_preset_defaults() {
   local preset_slam_map_prefix=""
   case "${preset_name}" in
     zt_0)
-      preset_slam_map_prefix="${WS_DIR}/src/map/zt_0"
+      preset_slam_map_prefix="${WS_DIR}/src/go2w_real/map/zt_0"
       ;;
     test_1)
-      preset_slam_map_prefix="${WS_DIR}/src/map/test_1"
+      preset_slam_map_prefix="${WS_DIR}/src/go2w_real/map/14_1"
       ;;
     *)
       echo "[start_nav_no_server] unknown map preset: ${preset_name}" >&2
@@ -213,7 +215,7 @@ echo "[start_nav_no_server] slam map prefix: ${SLAM_MAP_PREFIX}"
 echo "[start_nav_no_server] network interface: ${NETWORK_INTERFACE}"
 echo "[start_nav_no_server] logs: ${LOG_DIR}"
 
-if pgrep -f "${XT16_BIN}" >/dev/null 2>&1; then
+if pgrep -f "${XT16_PROCESS_MATCHER}" >/dev/null 2>&1; then
   echo "[start_nav_no_server] xt16_driver already running, reusing existing process"
 else
   "${XT16_BIN}" >"${LOG_DIR}/xt16_driver.log" 2>&1 &

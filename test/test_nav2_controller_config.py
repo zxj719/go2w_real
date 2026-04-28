@@ -44,7 +44,7 @@ def test_baseline_nav2_dwb_controller_targets():
     assert math.isclose(
         follow_path["max_vel_theta"], 0.75, rel_tol=0.0, abs_tol=1e-6
     )
-    assert math.isclose(follow_path["acc_lim_theta"], 1.5, rel_tol=0.0, abs_tol=1e-6)
+    assert math.isclose(follow_path["acc_lim_theta"], 1.2, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(follow_path["decel_lim_theta"], -1.5, rel_tol=0.0, abs_tol=1e-6)
     assert follow_path["vx_samples"] == 15
     assert follow_path["vtheta_samples"] == 20

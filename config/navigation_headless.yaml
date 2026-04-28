@@ -14,6 +14,8 @@ profiles:
 cleanup:
   process_matchers:
     - /unitree/module/unitree_slam/bin/xt16_driver
+    - /unitree/module/unitree_slam/bin/xt16_driver_go2w_timefix
+    - xt16_driver_timefix.sh
     - ros2 launch go2w_real slam_rf2o.launch.py
     - navigation_executor.py
   term_timeout_sec: 5

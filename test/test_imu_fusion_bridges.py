@@ -120,7 +120,7 @@ def test_lowstate_rf2o_fusion_config_uses_rf2o_and_corrected_utlidar_imu():
     ]
 
 
-def test_slam_launch_runs_rf2o_as_fusion_input_and_starts_imu_adapters():
+def test_slam_launch_keeps_rf2o_diagnostics_but_defaults_to_sport_odom_fusion():
     launch_text = (PACKAGE_ROOT / "launch/slam_rf2o.launch.py").read_text()
 
     assert "rf2o_fusion_input_node" in launch_text
@@ -128,7 +128,9 @@ def test_slam_launch_runs_rf2o_as_fusion_input_and_starts_imu_adapters():
     assert '"publish_tf": False' in launch_text
     assert "utlidar_imu_adapter.py" in launch_text
     assert "lowstate_imu_bridge.py" in launch_text
-    assert "odom_fusion_lowstate_rf2o.yaml" in launch_text
+    assert '"config", "odom_fusion_params.yaml"' in launch_text
+    assert "odom_fusion_params_file" in launch_text
+    assert (PACKAGE_ROOT / "config/odom_fusion_lowstate_rf2o.yaml").is_file()
 
 
 def test_cmakelists_installs_imu_bridge_scripts_and_registers_tests():

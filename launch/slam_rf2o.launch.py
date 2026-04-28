@@ -1,7 +1,7 @@
 """
-GO2W real robot SLAM + Nav2 with RF2O-first local odometry:
-  pointcloud -> scan -> RF2O -> /odom
-  optional: /sport_odom + /sport_imu -> robot_localization EKF -> /odom
+GO2W real robot SLAM + Nav2 with stable local odometry for mapped navigation:
+  /sport_odom + /sport_imu -> robot_localization EKF -> /odom
+  pointcloud -> scan -> RF2O -> /rf2o/odom diagnostics/fallback
   pointcloud -> scan -> slam_toolbox -> Nav2
 
 Supports two SLAM modes:
@@ -109,7 +109,7 @@ def generate_launch_description():
         pkg_dir, "config", "nav2_params_foxy.yaml"
     )
     odom_fusion_default_params_file = os.path.join(
-        pkg_dir, "config", "odom_fusion_lowstate_rf2o.yaml"
+        pkg_dir, "config", "odom_fusion_params.yaml"
     )
     motion_executor_params_file = os.path.join(
         pkg_dir, "config", "go2w_motion_executor.yaml"
@@ -224,8 +224,9 @@ def generate_launch_description():
         "use_odom_fusion",
         default_value="true",
         description=(
-            "Default false keeps /odom on RF2O odom only; set true to publish "
-            "/odom from robot_localization EKF fused from /rf2o/odom + corrected IMU"
+            "Publish /odom from robot_localization EKF. The default fusion "
+            "params use /sport_odom + /sport_imu; RF2O is kept on /rf2o/odom "
+            "for diagnostics/fallback."
         ),
     )
     declare_odom_fusion_params_file = DeclareLaunchArgument(
@@ -777,9 +778,9 @@ def generate_launch_description():
             "  - RViz opens with the Nav2 layout and a 2D Goal Pose tool\n"
             "  - Click '2D Goal Pose' in RViz, then drag to set goal position + yaw\n"
             "  - Robot must already be standing before motion commands are sent\n"
-            "  - /odom defaults to RF2O odom only\n"
-            "  - Set use_odom_fusion:=true to enable robot_localization EKF "
-            "from /rf2o/odom + /lowstate_imu + /utlidar_imu_base\n"
+            "  - /odom stays on sport odom + IMU fusion by default\n"
+            "  - RF2O is kept on /rf2o/odom for diagnostics/fallback and is "
+            "not fused into /odom unless odom_fusion_params_file is overridden\n"
             "  - Pointcloud source defaults to /unitree/slam_lidar/points\n"
             "  - Save map: mkdir -p ~/maps && ros2 run nav2_map_server map_saver_cli -f ~/maps/go2w_map\n"
             "\n========================================\n",

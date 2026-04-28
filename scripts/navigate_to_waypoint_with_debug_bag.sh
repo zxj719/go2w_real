@@ -122,11 +122,19 @@ Wrapper options:
   --slam-mode MODE            slam_rf2o slam_mode value, default: localization
   --nav-ready-timeout SEC     Wait timeout for bt_navigator readiness, default: 120
   --tf-ready-timeout SEC      Wait timeout for TF map <- base readiness, default: 30
+  --scan-ready-timeout SEC    Wait timeout for /scan health, default: 20
+  --scan-ready-min-hz HZ      Minimum /scan receive rate before navigation, default: 4.0
+  --xt16-ready-timeout SEC    Wait timeout for XT16 pointcloud health, default: 10
+  --xt16-ready-min-hz HZ      Minimum /unitree/slam_lidar/points rate, default: 8.0
+  --xt16-ready-restarts N     Restart xt16_driver up to N times if unhealthy, default: 2
   --xt16-warmup-sec SEC       Warmup delay after starting xt16_driver, default: 2
   --skip-nav-ready-wait       Do not wait for bt_navigator before starting rosbag + navigate
   --skip-tf-ready-wait        Do not wait for TF map <- base before starting rosbag + navigate
+  --skip-scan-ready-wait      Do not wait for healthy /scan before starting rosbag + navigate
+  --skip-xt16-ready-wait      Do not validate XT16 pointcloud before slam_rf2o launch
   --map-frame FRAME           TF target frame for readiness wait; forwarded to navigate_to_waypoint.py
   --base-frame FRAME          TF source frame for readiness wait; forwarded to navigate_to_waypoint.py
+  --all-waypoints             Forward to navigate_to_waypoint.py and visit every waypoint in the file
 
 Useful examples:
   navigate_to_waypoint_with_debug_bag.sh --all-waypoints
@@ -139,6 +147,8 @@ Environment overrides:
   GO2W_NAVIGATE_BIN
   GO2W_ROS2_BIN
   GO2W_XT16_BIN
+  GO2W_XT16_VENDOR_BIN
+  GO2W_XT16_PATCHED_BIN
   GO2W_NAV_PROFILE
   GO2W_WAYPOINT_FILE
   GO2W_SLAM_MAP_FILE
@@ -146,12 +156,26 @@ Environment overrides:
   GO2W_SKIP_BRINGUP
   GO2W_SKIP_NAV_READY_WAIT
   GO2W_SKIP_TF_READY_WAIT
+  GO2W_SKIP_SCAN_READY_WAIT
+  GO2W_SKIP_XT16_READY_WAIT
   GO2W_NAV_READY_TIMEOUT_SEC
   GO2W_TF_READY_TIMEOUT_SEC
+  GO2W_SCAN_READY_TIMEOUT_SEC
+  GO2W_SCAN_READY_MIN_HZ
+  GO2W_SCAN_READY_WINDOW_SEC
+  GO2W_SCAN_READY_MIN_SAMPLES
+  GO2W_XT16_READY_TIMEOUT_SEC
+  GO2W_XT16_READY_MIN_HZ
+  GO2W_XT16_READY_WINDOW_SEC
+  GO2W_XT16_READY_MIN_SAMPLES
+  GO2W_XT16_READY_RESTARTS
+  GO2W_XT16_POINT_TOPIC
+  GO2W_XT16_WORKDIR
   GO2W_XT16_WARMUP_SEC
   GO2W_MAP_FRAME
   GO2W_BASE_FRAME
   GO2W_WAIT_FOR_TF_BIN
+  GO2W_WAIT_FOR_SCAN_HEALTH_BIN
   GO2W_ROS_SETUP_FILE
   GO2W_INSTALL_SETUP_FILE
   GO2W_UNITREE_SETUP_FILE
@@ -165,7 +189,7 @@ INSTALL_SETUP_FILE="${GO2W_INSTALL_SETUP_FILE:-${WS_DIR}/install/setup.bash}"
 UNITREE_SETUP_FILE="${GO2W_UNITREE_SETUP_FILE-/home/unitree/unitree_ros2/setup.sh}"
 NAVIGATE_BIN="${GO2W_NAVIGATE_BIN:-${PACKAGE_SRC_DIR}/scripts/navigate_to_waypoint.py}"
 ROS2_BIN="${GO2W_ROS2_BIN:-ros2}"
-XT16_BIN="${GO2W_XT16_BIN:-/unitree/module/unitree_slam/bin/xt16_driver}"
+XT16_BIN="${GO2W_XT16_BIN:-${PACKAGE_SRC_DIR}/scripts/xt16_driver_timefix.sh}"
 NAV_PROFILE="${GO2W_NAV_PROFILE:-zt_0}"
 WAYPOINT_FILE="${GO2W_WAYPOINT_FILE:-}"
 SLAM_MAP_FILE="${GO2W_SLAM_MAP_FILE:-}"
@@ -173,12 +197,26 @@ SLAM_MODE="${GO2W_SLAM_MODE:-localization}"
 START_BRINGUP="1"
 WAIT_FOR_NAV_READY="1"
 WAIT_FOR_TF_READY="1"
+WAIT_FOR_SCAN_READY="1"
+WAIT_FOR_XT16_READY="1"
 NAV_READY_TIMEOUT_SEC="${GO2W_NAV_READY_TIMEOUT_SEC:-120}"
 TF_READY_TIMEOUT_SEC="${GO2W_TF_READY_TIMEOUT_SEC:-30.0}"
+SCAN_READY_TIMEOUT_SEC="${GO2W_SCAN_READY_TIMEOUT_SEC:-20.0}"
+SCAN_READY_MIN_HZ="${GO2W_SCAN_READY_MIN_HZ:-4.0}"
+SCAN_READY_WINDOW_SEC="${GO2W_SCAN_READY_WINDOW_SEC:-2.0}"
+SCAN_READY_MIN_SAMPLES="${GO2W_SCAN_READY_MIN_SAMPLES:-5}"
+XT16_READY_TIMEOUT_SEC="${GO2W_XT16_READY_TIMEOUT_SEC:-10.0}"
+XT16_READY_MIN_HZ="${GO2W_XT16_READY_MIN_HZ:-8.0}"
+XT16_READY_WINDOW_SEC="${GO2W_XT16_READY_WINDOW_SEC:-2.0}"
+XT16_READY_MIN_SAMPLES="${GO2W_XT16_READY_MIN_SAMPLES:-5}"
+XT16_READY_RESTARTS="${GO2W_XT16_READY_RESTARTS:-2}"
+XT16_POINT_TOPIC="${GO2W_XT16_POINT_TOPIC:-/unitree/slam_lidar/points}"
+XT16_WORKDIR="${GO2W_XT16_WORKDIR:-$(dirname "${XT16_BIN}")}"
 XT16_WARMUP_SEC="${GO2W_XT16_WARMUP_SEC:-2}"
 TF_TARGET_FRAME="${GO2W_MAP_FRAME:-map}"
 TF_SOURCE_FRAME="${GO2W_BASE_FRAME:-base}"
 WAIT_FOR_TF_BIN="${GO2W_WAIT_FOR_TF_BIN:-${PACKAGE_SRC_DIR}/scripts/wait_for_transform.py}"
+WAIT_FOR_SCAN_HEALTH_BIN="${GO2W_WAIT_FOR_SCAN_HEALTH_BIN:-${PACKAGE_SRC_DIR}/scripts/wait_for_topic_rate.py}"
 BAG_TOPICS_HELPER="${SCRIPT_DIR}/navigation_debug_bag_topics.sh"
 OUTPUT_ROOT="${GO2W_DEBUG_BAG_OUTPUT_DIR:-${WS_DIR}/log/navigate_to_waypoint_debug_$(date +%Y%m%d_%H%M%S)}"
 BAG_OUTPUT_DIR="${OUTPUT_ROOT}/bag"
@@ -186,6 +224,8 @@ BAG_LOG_FILE="${OUTPUT_ROOT}/rosbag_record.log"
 XT16_LOG_FILE="${OUTPUT_ROOT}/xt16_driver.log"
 LAUNCH_LOG_FILE="${OUTPUT_ROOT}/slam_rf2o.log"
 TF_WAIT_LOG_FILE="${OUTPUT_ROOT}/wait_for_tf.log"
+SCAN_WAIT_LOG_FILE="${OUTPUT_ROOT}/wait_for_scan.log"
+XT16_WAIT_LOG_FILE="${OUTPUT_ROOT}/wait_for_xt16_points.log"
 NAVIGATE_ARGS=()
 BAG_PID=""
 NAVIGATE_PID=""
@@ -232,6 +272,12 @@ if [[ "${GO2W_SKIP_NAV_READY_WAIT:-0}" == "1" ]]; then
 fi
 if [[ "${GO2W_SKIP_TF_READY_WAIT:-0}" == "1" ]]; then
   WAIT_FOR_TF_READY="0"
+fi
+if [[ "${GO2W_SKIP_SCAN_READY_WAIT:-0}" == "1" ]]; then
+  WAIT_FOR_SCAN_READY="0"
+fi
+if [[ "${GO2W_SKIP_XT16_READY_WAIT:-0}" == "1" ]]; then
+  WAIT_FOR_XT16_READY="0"
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -334,8 +380,76 @@ while [[ $# -gt 0 ]]; do
       TF_READY_TIMEOUT_SEC="${1#*=}"
       shift
       ;;
+    --scan-ready-timeout)
+      SCAN_READY_TIMEOUT_SEC="${2:-}"
+      if [[ -z "${SCAN_READY_TIMEOUT_SEC}" ]]; then
+        echo "[navigate_debug_bag] --scan-ready-timeout requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --scan-ready-timeout=*)
+      SCAN_READY_TIMEOUT_SEC="${1#*=}"
+      shift
+      ;;
+    --scan-ready-min-hz)
+      SCAN_READY_MIN_HZ="${2:-}"
+      if [[ -z "${SCAN_READY_MIN_HZ}" ]]; then
+        echo "[navigate_debug_bag] --scan-ready-min-hz requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --scan-ready-min-hz=*)
+      SCAN_READY_MIN_HZ="${1#*=}"
+      shift
+      ;;
+    --xt16-ready-timeout)
+      XT16_READY_TIMEOUT_SEC="${2:-}"
+      if [[ -z "${XT16_READY_TIMEOUT_SEC}" ]]; then
+        echo "[navigate_debug_bag] --xt16-ready-timeout requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --xt16-ready-timeout=*)
+      XT16_READY_TIMEOUT_SEC="${1#*=}"
+      shift
+      ;;
+    --xt16-ready-min-hz)
+      XT16_READY_MIN_HZ="${2:-}"
+      if [[ -z "${XT16_READY_MIN_HZ}" ]]; then
+        echo "[navigate_debug_bag] --xt16-ready-min-hz requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --xt16-ready-min-hz=*)
+      XT16_READY_MIN_HZ="${1#*=}"
+      shift
+      ;;
+    --xt16-ready-restarts)
+      XT16_READY_RESTARTS="${2:-}"
+      if [[ -z "${XT16_READY_RESTARTS}" ]]; then
+        echo "[navigate_debug_bag] --xt16-ready-restarts requires a value" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --xt16-ready-restarts=*)
+      XT16_READY_RESTARTS="${1#*=}"
+      shift
+      ;;
     --skip-tf-ready-wait)
       WAIT_FOR_TF_READY="0"
+      shift
+      ;;
+    --skip-scan-ready-wait)
+      WAIT_FOR_SCAN_READY="0"
+      shift
+      ;;
+    --skip-xt16-ready-wait)
+      WAIT_FOR_XT16_READY="0"
       shift
       ;;
     --map-frame)
@@ -415,6 +529,14 @@ if [[ "${START_BRINGUP}" == "1" ]]; then
     echo "[navigate_debug_bag] missing TF wait helper: ${WAIT_FOR_TF_BIN}" >&2
     exit 1
   fi
+  if [[ "${WAIT_FOR_SCAN_READY}" == "1" && ! -e "${WAIT_FOR_SCAN_HEALTH_BIN}" ]]; then
+    echo "[navigate_debug_bag] missing scan health wait helper: ${WAIT_FOR_SCAN_HEALTH_BIN}" >&2
+    exit 1
+  fi
+  if [[ "${WAIT_FOR_XT16_READY}" == "1" && ! -e "${WAIT_FOR_SCAN_HEALTH_BIN}" ]]; then
+    echo "[navigate_debug_bag] missing topic-rate wait helper: ${WAIT_FOR_SCAN_HEALTH_BIN}" >&2
+    exit 1
+  fi
 fi
 
 cleanup() {
@@ -431,6 +553,71 @@ cleanup() {
 
 trap cleanup EXIT HUP INT QUIT TERM
 
+start_xt16_driver() {
+  echo "[navigate_debug_bag] starting xt16_driver from ${XT16_BIN}"
+  {
+    echo "========== xt16_driver start $(date --iso-8601=seconds) =========="
+    echo "workdir: ${XT16_WORKDIR}"
+  } >>"${XT16_LOG_FILE}"
+
+  if command -v setsid >/dev/null 2>&1; then
+    (
+      cd "${XT16_WORKDIR}"
+      exec setsid "${XT16_BIN}"
+    ) >>"${XT16_LOG_FILE}" 2>&1 &
+    XT16_USE_PROCESS_GROUP="1"
+  else
+    (
+      cd "${XT16_WORKDIR}"
+      exec "${XT16_BIN}"
+    ) >>"${XT16_LOG_FILE}" 2>&1 &
+  fi
+  XT16_PID=$!
+  echo "[navigate_debug_bag] started xt16_driver (pid=${XT16_PID})"
+}
+
+wait_for_xt16_points_ready() {
+  echo "[navigate_debug_bag] waiting for ${XT16_POINT_TOPIC} >= ${XT16_READY_MIN_HZ} Hz..."
+  {
+    echo "========== xt16 pointcloud wait $(date --iso-8601=seconds) =========="
+  } >>"${XT16_WAIT_LOG_FILE}"
+
+  "${WAIT_FOR_SCAN_HEALTH_BIN}" \
+    --ros-args \
+    -p "topic:=${XT16_POINT_TOPIC}" \
+    -p "topic_type:=sensor_msgs/msg/PointCloud2" \
+    -p "min_rate_hz:=${XT16_READY_MIN_HZ}" \
+    -p "min_samples:=${XT16_READY_MIN_SAMPLES}" \
+    -p "window_sec:=${XT16_READY_WINDOW_SEC}" \
+    -p "timeout_sec:=${XT16_READY_TIMEOUT_SEC}" \
+    -p "log_period:=2.0" >>"${XT16_WAIT_LOG_FILE}" 2>&1
+}
+
+ensure_xt16_points_ready() {
+  local attempt=0
+  local max_attempts=$((XT16_READY_RESTARTS + 1))
+
+  while (( attempt < max_attempts )); do
+    attempt=$((attempt + 1))
+    if wait_for_xt16_points_ready; then
+      echo "[navigate_debug_bag] ${XT16_POINT_TOPIC} is healthy."
+      return 0
+    fi
+
+    if (( attempt >= max_attempts )); then
+      echo "[navigate_debug_bag] ${XT16_POINT_TOPIC} did not reach ${XT16_READY_MIN_HZ} Hz after ${attempt} attempt(s), check ${XT16_WAIT_LOG_FILE} and ${XT16_LOG_FILE}" >&2
+      return 1
+    fi
+
+    echo "[navigate_debug_bag] ${XT16_POINT_TOPIC} unhealthy; restarting xt16_driver (attempt ${attempt}/${max_attempts})"
+    stop_pid_if_running "${XT16_PID}" "xt16_driver" TERM 5 2 "${XT16_USE_PROCESS_GROUP}"
+    XT16_PID=""
+    XT16_USE_PROCESS_GROUP="0"
+    start_xt16_driver
+    sleep "${XT16_WARMUP_SEC}"
+  done
+}
+
 safe_source "${ROS_SETUP_FILE}"
 if [[ -n "${UNITREE_SETUP_FILE}" && -f "${UNITREE_SETUP_FILE}" ]]; then
   safe_source "${UNITREE_SETUP_FILE}"
@@ -441,20 +628,18 @@ mkdir -p "${OUTPUT_ROOT}"
 printf '%s\n' "${GO2W_NAVIGATION_DEBUG_BAG_TOPICS[@]}" > "${OUTPUT_ROOT}/topics.txt"
 
 if [[ "${START_BRINGUP}" == "1" ]]; then
-  echo "[navigate_debug_bag] starting xt16_driver from ${XT16_BIN}"
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "${XT16_BIN}" >"${XT16_LOG_FILE}" 2>&1 &
-    XT16_USE_PROCESS_GROUP="1"
-  else
-    "${XT16_BIN}" >"${XT16_LOG_FILE}" 2>&1 &
-  fi
-  XT16_PID=$!
-  echo "[navigate_debug_bag] started xt16_driver (pid=${XT16_PID})"
+  : >"${XT16_LOG_FILE}"
+  : >"${XT16_WAIT_LOG_FILE}"
+  start_xt16_driver
   sleep "${XT16_WARMUP_SEC}"
 
   if ! kill -0 "${XT16_PID}" 2>/dev/null; then
     echo "[navigate_debug_bag] xt16_driver exited early, check ${XT16_LOG_FILE}" >&2
     exit 1
+  fi
+
+  if [[ "${WAIT_FOR_XT16_READY}" == "1" ]]; then
+    ensure_xt16_points_ready
   fi
 
   echo "[navigate_debug_bag] launching slam_rf2o localization with map ${SLAM_MAP_FILE}"
@@ -512,6 +697,23 @@ if [[ "${START_BRINGUP}" == "1" ]]; then
       exit 1
     fi
     echo "[navigate_debug_bag] TF ${TF_TARGET_FRAME} <- ${TF_SOURCE_FRAME} is ready."
+  fi
+
+  if [[ "${WAIT_FOR_SCAN_READY}" == "1" ]]; then
+    echo "[navigate_debug_bag] waiting for /scan >= ${SCAN_READY_MIN_HZ} Hz before navigation..."
+    if ! "${WAIT_FOR_SCAN_HEALTH_BIN}" \
+      --ros-args \
+      -p "topic:=/scan" \
+      -p "topic_type:=sensor_msgs/msg/LaserScan" \
+      -p "min_rate_hz:=${SCAN_READY_MIN_HZ}" \
+      -p "min_samples:=${SCAN_READY_MIN_SAMPLES}" \
+      -p "window_sec:=${SCAN_READY_WINDOW_SEC}" \
+      -p "timeout_sec:=${SCAN_READY_TIMEOUT_SEC}" \
+      -p "log_period:=2.0" >"${SCAN_WAIT_LOG_FILE}" 2>&1; then
+      echo "[navigate_debug_bag] /scan did not reach ${SCAN_READY_MIN_HZ} Hz within ${SCAN_READY_TIMEOUT_SEC}s, check ${SCAN_WAIT_LOG_FILE}" >&2
+      exit 1
+    fi
+    echo "[navigate_debug_bag] /scan rate is healthy."
   fi
 fi
 

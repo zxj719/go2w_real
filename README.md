@@ -141,11 +141,12 @@ Robot default IP is commonly `192.168.123.161`.
 
 ### 1. Start the XT16 lidar driver
 
-Terminal 1, start the XT16 lidar driver first:
+Terminal 1, start the XT16 lidar driver first. Use the GO2W wrapper so the
+driver accepts this robot's XT16 frame interval instead of discarding stable
+~63 ms frames as abnormal:
 
 ```bash
-cd /unitree/module/unitree_slam/bin
-./xt16_driver
+~/ros_ws/src/go2w_real/scripts/xt16_driver_timefix.sh
 ```
 
 ### 2. Source the environment

@@ -5,8 +5,13 @@ GO2W_NAVIGATION_DEBUG_BAG_TOPICS=(
   /tf_static
   /map
   /odom
+  /rf2o/odom
   /sport_odom
   /sport_imu
+  /lowstate_imu
+  /utlidar_imu_base
+  /unitree/slam_lidar/points
+  /cloud_relayed
   /scan
   /scan_raw
   /cmd_vel

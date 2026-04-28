@@ -108,7 +108,7 @@ def test_fast_recovery_tree_spins_immediately_without_backup_or_wait():
     assert '<BackUp server_name="backup"' not in bt_xml
     assert '<Wait wait_duration="2" server_timeout="5000"/>' not in bt_xml
     assert "ReinitializeGlobalLocalization" not in bt_xml
-    assert '<Spin spin_dist="0.8" server_timeout="5000"/>' in bt_xml
+    assert '<Spin spin_dist="0.4" server_timeout="5000"/>' in bt_xml
     assert bt_xml.index('ClearGlobalCostmap-Subtree"') < bt_xml.index("<Spin")
 
 
@@ -124,7 +124,7 @@ def test_fast_recovery_tree_sets_explicit_server_timeout_on_bt_nodes():
     assert 'ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>' in bt_xml
     assert 'ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap" server_timeout="5000"/>' in bt_xml
     assert 'ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap" server_timeout="5000"/>' in bt_xml
-    assert '<Spin spin_dist="0.8" server_timeout="5000"/>' in bt_xml
+    assert '<Spin spin_dist="0.4" server_timeout="5000"/>' in bt_xml
 
 
 def test_fast_recovery_tree_uses_moderate_replanning_rate():
