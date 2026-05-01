@@ -41,7 +41,7 @@ bt_navigator:
 controller_server:
   ros__parameters:
     controller_frequency: 15.0
-    min_x_velocity_threshold: 0.001
+    min_x_velocity_threshold: 0.0
     min_y_velocity_threshold: 0.0
     min_theta_velocity_threshold: 0.02
     failure_tolerance: 2.0
@@ -73,19 +73,19 @@ controller_server:
       # GO2W is commanded as a diff-drive platform in this stack.
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.75
+      max_vel_x: 0.6
       max_vel_y: 0.0
-      max_vel_theta: 0.75
+      max_vel_theta: 0.50
       min_vel_theta: 0.05
       min_speed_xy: 0.0
       max_speed_xy: 0.75
       min_speed_theta: 0.05
-      acc_lim_x: 1.2
+      acc_lim_x: 1.0
       acc_lim_y: 0.0
-      acc_lim_theta: 1.2
+      acc_lim_theta: 0.5
       decel_lim_x: -1.2
       decel_lim_y: 0.0
-      decel_lim_theta: -1.5
+      decel_lim_theta: -1.0
       vx_samples: 15
       vy_samples: 1
       vtheta_samples: 20
@@ -98,7 +98,7 @@ controller_server:
       # real hardware. Give the controller a little more TF age budget so it
       # does not abort on brief map<-odom lag spikes.
       transform_tolerance: 2.0
-      xy_goal_tolerance: 0.30
+      xy_goal_tolerance: 0.50
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: True
       stateful: True
@@ -176,11 +176,11 @@ local_costmap:
       footprint_padding: 0.01
       transform_tolerance: 2.0
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        enabled: True
-        map_subscribe_transient_local: True
+      plugins: ["obstacle_layer", "inflation_layer"]
+      # static_layer:
+      #   plugin: "nav2_costmap_2d::StaticLayer"
+      #   enabled: True
+      #   map_subscribe_transient_local: True
         # Subscribes to /map from SLAM Toolbox so the controller always
         # sees mapped obstacles even outside current scan FOV.
       obstacle_layer:
@@ -203,7 +203,7 @@ local_costmap:
         cost_scaling_factor: 5.0
         # Keep a wider buffer than the inscribed radius so newly observed
         # obstacles are penalized early without over-blocking narrow turns.
-        inflation_radius: 0.30
+        inflation_radius: 0.35
       always_send_full_costmap: True
 
 # -----------------------------------------------------------------------------
@@ -279,4 +279,4 @@ recoveries_server:
     simulate_ahead_time: 1.0
     max_rotational_vel: 0.45
     min_rotational_vel: 0.15
-    rotational_acc_lim: 1.5
+    rotational_acc_lim: 0.5

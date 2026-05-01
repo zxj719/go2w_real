@@ -14,6 +14,8 @@ def test_localization_slam_params_keep_loop_closing_enabled():
     assert params["do_loop_closing"] is True
     assert params["minimum_travel_distance"] == 0.1
     assert params["minimum_travel_heading"] == 0.02
-    assert params["link_match_minimum_response_fine"] == 0.2
+    assert params["scan_buffer_size"] == 20
+    assert params["link_match_minimum_response_fine"] == 0.1
     assert params["loop_match_minimum_response_coarse"] == 0.5
     assert params["loop_match_minimum_response_fine"] == 0.6
+    assert params["correlation_search_space_dimension"] == 0.8

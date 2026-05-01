@@ -39,13 +39,14 @@ def test_baseline_nav2_dwb_controller_targets():
         controller_params["failure_tolerance"], 2.0, rel_tol=0.0, abs_tol=1e-6
     )
     assert follow_path["plugin"] == "dwb_core::DWBLocalPlanner"
-    assert math.isclose(follow_path["max_vel_x"], 0.75, rel_tol=0.0, abs_tol=1e-6)
+    assert math.isclose(follow_path["max_vel_x"], 0.60, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(follow_path["max_speed_xy"], 0.75, rel_tol=0.0, abs_tol=1e-6)
     assert math.isclose(
-        follow_path["max_vel_theta"], 0.75, rel_tol=0.0, abs_tol=1e-6
+        follow_path["max_vel_theta"], 0.50, rel_tol=0.0, abs_tol=1e-6
     )
-    assert math.isclose(follow_path["acc_lim_theta"], 1.2, rel_tol=0.0, abs_tol=1e-6)
-    assert math.isclose(follow_path["decel_lim_theta"], -1.5, rel_tol=0.0, abs_tol=1e-6)
+    assert math.isclose(follow_path["acc_lim_x"], 1.0, rel_tol=0.0, abs_tol=1e-6)
+    assert math.isclose(follow_path["acc_lim_theta"], 0.5, rel_tol=0.0, abs_tol=1e-6)
+    assert math.isclose(follow_path["decel_lim_theta"], -1.0, rel_tol=0.0, abs_tol=1e-6)
     assert follow_path["vx_samples"] == 15
     assert follow_path["vtheta_samples"] == 20
     assert math.isclose(follow_path["sim_time"], 1.6, rel_tol=0.0, abs_tol=1e-6)
@@ -102,6 +103,9 @@ def test_nav2_real_hardware_tf_tolerances_are_relaxed_for_rf2o():
         rel_tol=0.0,
         abs_tol=1e-6,
     )
+    assert nav2_cfg["local_costmap"]["local_costmap"]["ros__parameters"][
+        "plugins"
+    ] == ["obstacle_layer", "inflation_layer"]
 
 
 def test_costmaps_use_filtered_scan_for_dynamic_obstacles():
