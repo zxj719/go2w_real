@@ -159,6 +159,10 @@ if(BUILD_TESTING)
     test/test_navigation_executor.py
   )
   ament_add_pytest_test(
+    test_operator_console
+    test/test_operator_console.py
+  )
+  ament_add_pytest_test(
     test_headless_config
     test/test_headless_config.py
   )
@@ -177,6 +181,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_wait_for_transform
     test/test_wait_for_transform.py
+  )
+  ament_add_pytest_test(
+    test_pointcloud_relay
+    test/test_pointcloud_relay.py
   )
   ament_add_pytest_test(
     test_save_map_and_waypoints

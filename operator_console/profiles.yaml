@@ -37,6 +37,34 @@ navigation:
     source /home/unitree/ros_ws/install/setup.bash &&
     exec ros2 run go2w_real emergency_stop.py
 
+debug_navigation:
+  command: /home/unitree/ros_ws/src/go2w_real/scripts/navigate_to_waypoint_with_debug_bag.sh
+  default_profile: zt_0
+  allowed_profiles:
+    - zt_0
+    - '14_1'
+  waypoint_files:
+    zt_0: /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml
+    '14_1': /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml
+  defaults:
+    near_goal_distance: 0.40
+    success_check_distance: 0.75
+    abort_replan_retries: 1
+    nav_ready_timeout: 120
+    tf_ready_timeout: 30
+    scan_ready_timeout: 20
+    scan_ready_min_hz: 4.0
+    xt16_ready_timeout: 10
+    xt16_ready_min_hz: 8.0
+    xt16_ready_restarts: 2
+
+visualization:
+  foxglove_port: 8765
+  foxglove_url: https://app.foxglove.dev/~/view?ds=foxglove-websocket&ds.url=ws://{{host}}:{{foxglove_port}}
+  # RViz2 itself is a desktop Qt app. This URL is for robot-side noVNC/x11vnc
+  # deployments that expose the RViz desktop to the phone browser.
+  rviz_url: http://{{host}}:6080/vnc.html?autoconnect=true&resize=remote
+
 profiles:
   navigation:
     command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_no_server.sh
@@ -57,7 +85,7 @@ profiles:
       ROS_DOMAIN_ID: "0"
 
   navigation_headless_ws:
-    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh --profile zt_0
     description: >
       Legacy headless stack that ALSO launches navigation_executor.py
       connecting to the external WebSocket navigation server (default
@@ -69,8 +97,19 @@ profiles:
       ROS_DOMAIN_ID: "0"
       GO2W_SHOW_EXECUTOR_LOGS: "1"
 
+  navigation_headless_rviz:
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh --profile zt_0
+    description: >
+      Headless WebSocket navigation stack with slam_rf2o launching RViz2 on
+      the robot desktop. Use the RViz/noVNC visualization link from the phone
+      when a desktop streaming service is enabled.
+    env:
+      ROS_DOMAIN_ID: "0"
+      GO2W_SHOW_EXECUTOR_LOGS: "1"
+      GO2W_HEADLESS_USE_RVIZ: "1"
+
   navigation_headless_ws_test_map:
-    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh test_1
+    command: /home/unitree/ros_ws/src/go2w_real/scripts/start_navigation_headless.sh --profile test_1
     description: >
       Same legacy WebSocket-executor stack but using the `test_1` map preset.
       Same warning: POI picker is disabled while this profile runs.

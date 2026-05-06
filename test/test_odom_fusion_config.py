@@ -119,7 +119,7 @@ def test_headless_config_pipeline_defaults_to_ekf_fusion():
     )
 
 
-def test_headless_start_script_supports_debug_rosbag_recording():
+def test_headless_start_script_supports_debug_rosbag_recording_when_enabled():
     config_text = (PACKAGE_ROOT / "config/navigation_headless.yaml").read_text()
     helper_output = subprocess.check_output(
         [
@@ -135,8 +135,8 @@ def test_headless_start_script_supports_debug_rosbag_recording():
         PACKAGE_ROOT / "scripts/navigation_debug_bag_topics.sh"
     ).read_text()
 
-    assert "record_bag: true" in config_text
-    assert "HEADLESS_RECORD_BAG=1" in helper_output
+    assert "record_bag: false" in config_text
+    assert "HEADLESS_RECORD_BAG=0" in helper_output
     assert '"${ROS2_BIN}" bag record' in script_text
     assert "--include-hidden-topics" in script_text
     assert "navigation_debug_bag_topics.sh" in script_text

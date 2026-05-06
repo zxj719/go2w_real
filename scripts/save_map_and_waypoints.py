@@ -16,10 +16,10 @@ import sys
 import threading
 
 
-DEFAULT_WAYPOINT_FILE = "/home/unitree/ros_ws/src/go2w_waypoints.yaml"
+DEFAULT_WAYPOINT_FILE = "/home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml"
 DEFAULT_MAP_FRAME = "map"
 DEFAULT_BASE_FRAME = "base"
-DEFAULT_POI_ID_START = 13
+DEFAULT_POI_ID_START = 12
 
 
 def _print_help():
@@ -27,7 +27,7 @@ def _print_help():
         "Usage: ros2 run go2w_real save_map_and_waypoints.py [options] [--ros-args ...]\n"
         "\n"
         "Options:\n"
-        "  --waypoint-file PATH       Waypoint YAML path, default: /home/unitree/ros_ws/src/go2w_waypoints.yaml\n"
+        "  --waypoint-file PATH       Waypoint YAML path, default: /home/unitree/ros_ws/src/go2w_real/config/go2w_waypoints.yaml\n"
         "  --map-frame FRAME          Map frame for saved waypoints, default: map\n"
         "  --base-frame FRAME         Robot base frame used for default yaw, default: base\n"
         "  -h, --help                 Show this help message\n"

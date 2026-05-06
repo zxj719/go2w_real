@@ -60,11 +60,11 @@ def test_headless_config_builds_executor_settings_from_selected_profile():
     assert executor["profile"] == "test_1"
     assert (
         executor["server_uri"]
-        == "ws://192.168.123.186:8100/ws/navigation/executor"
+        == "ws://172.16.22.205:8101/ws/navigation/executor"
     )
     assert executor["waypoint_file"].endswith("go2w_waypoints.yaml")
     assert executor["show_logs"] is True
-    assert executor["record_bag"] is True
+    assert executor["record_bag"] is False
     assert executor["use_odom_fusion"] is True
 
 

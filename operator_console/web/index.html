@@ -181,6 +181,39 @@ h1 {
 .btn-start { background: var(--green-dim); color: var(--green); }
 .btn-stop { background: var(--red-dim); color: var(--red); }
 .btn-cancel { background: var(--red-dim); color: var(--red); }
+.btn-secondary { background: var(--blue-dim); color: var(--blue); }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.field input,
+.field select {
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.checkbox-row label { display: flex; align-items: center; gap: 6px; }
 
 /* POI picker */
 .poi-list {
@@ -317,6 +350,75 @@ h1 {
   </div>
 </div>
 
+<!-- Debug bag navigation -->
+<div class="card">
+  <div class="card-title">
+    <span>Debug Bag Navigation</span>
+    <button class="refresh-btn" id="btnRefreshDebug">↻ status</button>
+  </div>
+  <div class="status-row">
+    <div class="status-dot idle" id="debugDot"></div>
+    <span class="status-text" id="debugText">Idle</span>
+  </div>
+  <div class="status-detail" id="debugDetail" style="margin-bottom: 12px;"></div>
+  <div class="form-grid">
+    <div class="field">
+      <label for="debugProfile">Map Profile</label>
+      <select id="debugProfile"></select>
+    </div>
+    <div class="field">
+      <label for="debugTargetId">Waypoint</label>
+      <input id="debugTargetId" type="text" placeholder="POI_019">
+    </div>
+    <div class="field">
+      <label for="debugSequence">Sequence</label>
+      <input id="debugSequence" type="text" placeholder="POI_019,POI_020">
+    </div>
+    <div class="field">
+      <label for="debugNearGoalDistance">Near Goal m</label>
+      <input id="debugNearGoalDistance" type="number" step="0.05" min="0.01">
+    </div>
+    <div class="field">
+      <label for="debugSuccessDistance">Success m</label>
+      <input id="debugSuccessDistance" type="number" step="0.05" min="0.01">
+    </div>
+    <div class="field">
+      <label for="debugAbortRetries">Abort Retries</label>
+      <input id="debugAbortRetries" type="number" step="1" min="0">
+    </div>
+    <div class="field">
+      <label for="debugTfTimeout">TF Timeout s</label>
+      <input id="debugTfTimeout" type="number" step="1" min="0.1">
+    </div>
+    <div class="field">
+      <label for="debugScanTimeout">Scan Timeout s</label>
+      <input id="debugScanTimeout" type="number" step="1" min="0.1">
+    </div>
+    <div class="field">
+      <label for="debugScanMinHz">Scan Min Hz</label>
+      <input id="debugScanMinHz" type="number" step="0.5" min="0.1">
+    </div>
+    <div class="field">
+      <label for="debugXt16Timeout">XT16 Timeout s</label>
+      <input id="debugXt16Timeout" type="number" step="1" min="0.1">
+    </div>
+    <div class="field">
+      <label for="debugXt16MinHz">XT16 Min Hz</label>
+      <input id="debugXt16MinHz" type="number" step="0.5" min="0.1">
+    </div>
+  </div>
+  <div class="checkbox-row">
+    <label><input id="debugNoBringup" type="checkbox"> no bringup</label>
+    <label><input id="debugAllWaypoints" type="checkbox"> all waypoints</label>
+    <label><input id="debugUseYaw" type="checkbox"> use waypoint yaw</label>
+    <label><input id="debugContinueOnFailure" type="checkbox"> continue on failure</label>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-secondary" id="btnStartDebug">Start debug bag</button>
+    <button class="btn btn-cancel" id="btnCancelDebug" disabled>Cancel debug</button>
+  </div>
+</div>
+
 <!-- Stack logs -->
 <div class="card">
   <div class="card-title">Stack Logs</div>
@@ -329,11 +431,18 @@ h1 {
   <div class="log-area" id="navLogArea">No logs yet.</div>
 </div>
 
+<!-- Debug logs -->
+<div class="card">
+  <div class="card-title">Debug Bag Logs</div>
+  <div class="log-area" id="debugLogArea">No logs yet.</div>
+</div>
+
 <!-- Quick Links -->
 <div class="card">
   <div class="card-title">Visualization</div>
   <div class="link-row">
     <a class="link-btn" id="foxgloveLink" href="#" target="_blank">Foxglove Web</a>
+    <a class="link-btn" id="rvizLink" href="#" target="_blank">RViz / noVNC</a>
   </div>
 </div>
 
@@ -380,7 +489,30 @@ h1 {
   var navDetail = document.getElementById("navDetail");
   var logArea = document.getElementById("logArea");
   var navLogArea = document.getElementById("navLogArea");
+  var debugDot = document.getElementById("debugDot");
+  var debugText = document.getElementById("debugText");
+  var debugDetail = document.getElementById("debugDetail");
+  var debugLogArea = document.getElementById("debugLogArea");
+  var debugProfile = document.getElementById("debugProfile");
+  var debugTargetId = document.getElementById("debugTargetId");
+  var debugSequence = document.getElementById("debugSequence");
+  var debugNearGoalDistance = document.getElementById("debugNearGoalDistance");
+  var debugSuccessDistance = document.getElementById("debugSuccessDistance");
+  var debugAbortRetries = document.getElementById("debugAbortRetries");
+  var debugTfTimeout = document.getElementById("debugTfTimeout");
+  var debugScanTimeout = document.getElementById("debugScanTimeout");
+  var debugScanMinHz = document.getElementById("debugScanMinHz");
+  var debugXt16Timeout = document.getElementById("debugXt16Timeout");
+  var debugXt16MinHz = document.getElementById("debugXt16MinHz");
+  var debugNoBringup = document.getElementById("debugNoBringup");
+  var debugAllWaypoints = document.getElementById("debugAllWaypoints");
+  var debugUseYaw = document.getElementById("debugUseYaw");
+  var debugContinueOnFailure = document.getElementById("debugContinueOnFailure");
+  var btnRefreshDebug = document.getElementById("btnRefreshDebug");
+  var btnStartDebug = document.getElementById("btnStartDebug");
+  var btnCancelDebug = document.getElementById("btnCancelDebug");
   var foxgloveLink = document.getElementById("foxgloveLink");
+  var rvizLink = document.getElementById("rvizLink");
   var healthGrid = document.getElementById("healthGrid");
   var toast = document.getElementById("toast");
   var btnEstop = document.getElementById("btnEstop");
@@ -390,12 +522,64 @@ h1 {
   var profiles = [];
   var currentProfile = "";
   var activeTargetId = null;
+  var debugDefaults = {};
+  var debugWaypointFiles = {};
 
-  // --- Foxglove link ---
+  // --- Visualization links ---
   var robotHost = window.location.hostname;
-  var foxgloveUrl = "https://app.foxglove.dev/~/view?ds=foxglove-websocket&ds.url=ws://"
-    + robotHost + ":" + FOXGLOVE_PORT;
-  foxgloveLink.href = foxgloveUrl;
+  function applyTemplateUrl(template, extra) {
+    extra = extra || {};
+    return String(template || "")
+      .split("{{host}}").join(robotHost)
+      .split("{{foxglove_port}}").join(String(extra.foxglove_port || FOXGLOVE_PORT));
+  }
+
+  function loadConfig() {
+    api("GET", "/api/config").then(function(data) {
+      var viz = data.visualization || {};
+      var debugCfg = data.debug_navigation || {};
+      FOXGLOVE_PORT = viz.foxglove_port || FOXGLOVE_PORT;
+      foxgloveLink.href = applyTemplateUrl(viz.foxglove_url, viz);
+      rvizLink.href = applyTemplateUrl(viz.rviz_url, viz);
+      populateDebugProfiles(debugCfg.allowed_profiles || ["zt_0", "14_1"], debugCfg.default_profile);
+      debugWaypointFiles = debugCfg.waypoint_files || {};
+      applyDebugDefaults(debugCfg.defaults || {});
+      loadPOIs();
+    }).catch(function() {
+      foxgloveLink.href = "https://app.foxglove.dev/~/view?ds=foxglove-websocket&ds.url=ws://"
+        + robotHost + ":" + FOXGLOVE_PORT;
+      rvizLink.href = "http://" + robotHost + ":6080/vnc.html?autoconnect=true&resize=remote";
+      populateDebugProfiles(["zt_0", "14_1"], "zt_0");
+      loadPOIs();
+    });
+  }
+
+  function populateDebugProfiles(items, selected) {
+    debugProfile.innerHTML = "";
+    items.forEach(function(name) {
+      var opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      debugProfile.appendChild(opt);
+    });
+    if (selected) debugProfile.value = selected;
+  }
+
+  function applyDebugDefaults(defaults) {
+    debugDefaults = defaults || {};
+    debugNearGoalDistance.value = valueOrBlank(defaults.near_goal_distance);
+    debugSuccessDistance.value = valueOrBlank(defaults.success_check_distance);
+    debugAbortRetries.value = valueOrBlank(defaults.abort_replan_retries);
+    debugTfTimeout.value = valueOrBlank(defaults.tf_ready_timeout);
+    debugScanTimeout.value = valueOrBlank(defaults.scan_ready_timeout);
+    debugScanMinHz.value = valueOrBlank(defaults.scan_ready_min_hz);
+    debugXt16Timeout.value = valueOrBlank(defaults.xt16_ready_timeout);
+    debugXt16MinHz.value = valueOrBlank(defaults.xt16_ready_min_hz);
+  }
+
+  function valueOrBlank(v) {
+    return v == null ? "" : String(v);
+  }
 
   // --- Toast ---
   var toastTimer = null;
@@ -550,7 +734,11 @@ h1 {
   }
 
   function loadPOIs() {
-    api("GET", "/api/waypoints").then(function(data) {
+    var profile = debugProfile.value || "";
+    var path = profile
+      ? "/api/waypoints?profile=" + encodeURIComponent(profile)
+      : "/api/waypoints";
+    api("GET", path).then(function(data) {
       if (!data.ok) {
         poiList.innerHTML = '<div class="poi-empty">' + (data.error || "Failed to load POIs.") + '</div>';
         return;
@@ -563,7 +751,12 @@ h1 {
 
   function triggerNavigate(targetId) {
     showToast("Dispatching navigation to " + targetId + "…");
-    api("POST", "/api/nav/goto", { target_id: targetId }).then(function(r) {
+    var body = { target_id: targetId };
+    var profile = debugProfile.value || "";
+    if (profile && debugWaypointFiles[profile]) {
+      body.waypoint_file = debugWaypointFiles[profile];
+    }
+    api("POST", "/api/nav/goto", body).then(function(r) {
       if (r.ok) {
         activeTargetId = targetId;
         highlightActivePOI();
@@ -589,6 +782,7 @@ h1 {
   }
 
   btnRefreshPOIs.addEventListener("click", loadPOIs);
+  debugProfile.addEventListener("change", loadPOIs);
 
   btnCancelNav.addEventListener("click", function() {
     btnCancelNav.disabled = true;
@@ -707,6 +901,98 @@ h1 {
     }).catch(function() {});
   }
 
+  // --- Debug bag navigation -----------------------------------------------
+
+  function numberOrNull(input) {
+    if (!input || input.value === "") return null;
+    return Number(input.value);
+  }
+
+  function collectDebugRequest() {
+    var req = {
+      profile: debugProfile.value || "zt_0",
+      no_bringup: debugNoBringup.checked,
+      all_waypoints: debugAllWaypoints.checked,
+      use_waypoint_yaw: debugUseYaw.checked,
+      continue_on_failure: debugContinueOnFailure.checked,
+      near_goal_distance: numberOrNull(debugNearGoalDistance),
+      success_check_distance: numberOrNull(debugSuccessDistance),
+      abort_replan_retries: numberOrNull(debugAbortRetries),
+      tf_ready_timeout: numberOrNull(debugTfTimeout),
+      scan_ready_timeout: numberOrNull(debugScanTimeout),
+      scan_ready_min_hz: numberOrNull(debugScanMinHz),
+      xt16_ready_timeout: numberOrNull(debugXt16Timeout),
+      xt16_ready_min_hz: numberOrNull(debugXt16MinHz),
+    };
+    var target = debugTargetId.value.trim();
+    var sequence = debugSequence.value.trim();
+    if (target) req.target_id = target;
+    if (sequence) req.waypoint_sequence = sequence;
+    return req;
+  }
+
+  btnStartDebug.addEventListener("click", function() {
+    btnStartDebug.disabled = true;
+    api("POST", "/api/debug/start", collectDebugRequest()).then(function(r) {
+      if (r.ok) {
+        showToast("Debug bag navigation started");
+      } else {
+        showToast(r.error || "Debug start failed");
+      }
+      pollDebugStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    }).finally(function() {
+      btnStartDebug.disabled = false;
+    });
+  });
+
+  btnCancelDebug.addEventListener("click", function() {
+    btnCancelDebug.disabled = true;
+    api("POST", "/api/debug/cancel").then(function(r) {
+      showToast(r.message || "Debug cancel requested");
+      pollDebugStatus();
+    }).catch(function() {
+      showToast("Connection failed");
+    });
+  });
+
+  btnRefreshDebug.addEventListener("click", function() {
+    pollDebugStatus();
+    pollDebugLogs();
+  });
+
+  function pollDebugStatus() {
+    api("GET", "/api/debug/status").then(function(s) {
+      var state = s.state || "idle";
+      debugDot.className = "status-dot " + state;
+      debugText.textContent = capitalize(state);
+
+      var details = [];
+      if (s.pid) details.push("PID " + s.pid);
+      if (s.uptime_seconds != null) details.push(formatUptime(s.uptime_seconds));
+      if (s.exit_code != null && state !== "running") details.push("exit " + s.exit_code);
+      if (s.request && s.request.profile) details.push("profile " + s.request.profile);
+      if (s.error) details.push(s.error);
+      debugDetail.textContent = details.join("  |  ");
+
+      btnCancelDebug.disabled = !(state === "running" || state === "starting");
+    }).catch(function() {
+      debugDot.className = "status-dot";
+      debugText.textContent = "Disconnected";
+      debugDetail.textContent = "";
+      btnCancelDebug.disabled = true;
+    });
+  }
+
+  function pollDebugLogs() {
+    api("GET", "/api/debug/logs?tail=80").then(function(data) {
+      var lines = data.lines || [];
+      debugLogArea.textContent = lines.length ? lines.join("\n") : "No logs yet.";
+      debugLogArea.scrollTop = debugLogArea.scrollHeight;
+    }).catch(function() {});
+  }
+
   // --- Health --------------------------------------------------------------
 
   function pollHealth() {
@@ -748,8 +1034,8 @@ h1 {
 
   // --- Init ----------------------------------------------------------------
 
+  loadConfig();
   loadProfiles();
-  loadPOIs();
 
   setInterval(function() {
     pollStatus();
@@ -759,6 +1045,8 @@ h1 {
   setInterval(pollStackLogs, LOG_POLL_MS);
   setInterval(pollNavStatus, NAV_POLL_MS);
   setInterval(pollNavLogs, LOG_POLL_MS);
+  setInterval(pollDebugStatus, NAV_POLL_MS);
+  setInterval(pollDebugLogs, LOG_POLL_MS);
 
   setTimeout(function() {
     pollStatus();
@@ -766,6 +1054,8 @@ h1 {
     pollStackLogs();
     pollNavStatus();
     pollNavLogs();
+    pollDebugStatus();
+    pollDebugLogs();
   }, 500);
 })();
 </script>

@@ -218,6 +218,10 @@ Options:
   --profile NAME    Headless config profile name, default: config default_profile
   -h, --help        Show this help
 
+Compatibility:
+  A single legacy positional profile is still accepted, e.g.
+  start_navigation_headless.sh test_1
+
 Default config profiles:
   zt_0    go2w_map_waypoints.yaml + map/zt_0
   14_1    go2w_waypoints.yaml + map/14_1
@@ -259,9 +263,16 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "[start_nav_headless] unknown option: $1" >&2
-      print_help >&2
-      exit 1
+      if [[ "$1" != -* && -z "${HEADLESS_PROFILE}" ]]; then
+        # legacy positional profile compatibility for older operator_console
+        # profiles and field notes.
+        HEADLESS_PROFILE="$1"
+        shift
+      else
+        echo "[start_nav_headless] unknown option: $1" >&2
+        print_help >&2
+        exit 1
+      fi
       ;;
   esac
 done
@@ -276,6 +287,21 @@ if [[ -n "${HEADLESS_PROFILE}" ]]; then
 fi
 
 eval "$("${CONFIG_RESOLVE_CMD[@]}")"
+
+if [[ -n "${GO2W_HEADLESS_USE_RVIZ:-}" ]]; then
+  case "${GO2W_HEADLESS_USE_RVIZ}" in
+    1|true|TRUE|yes|YES|on|ON)
+      HEADLESS_USE_RVIZ="1"
+      ;;
+    0|false|FALSE|no|NO|off|OFF)
+      HEADLESS_USE_RVIZ="0"
+      ;;
+    *)
+      echo "[start_nav_headless] invalid GO2W_HEADLESS_USE_RVIZ=${GO2W_HEADLESS_USE_RVIZ}" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 WAYPOINT_FILE="${HEADLESS_WAYPOINT_FILE}"
 SLAM_MAP_PREFIX="${HEADLESS_SLAM_MAP_FILE}"

@@ -22,9 +22,12 @@ def _load_save_map_and_waypoints_module():
 save_waypoints = _load_save_map_and_waypoints_module()
 
 
-def test_default_waypoint_identity_sequence_starts_from_poi_013():
-    assert save_waypoints._default_waypoint_id(1) == "POI_013"
-    assert save_waypoints._default_waypoint_id(2) == "POI_014"
+def test_default_waypoint_identity_sequence_starts_from_poi_012():
+    assert save_waypoints.DEFAULT_WAYPOINT_FILE.endswith(
+        "go2w_real/config/go2w_waypoints.yaml"
+    )
+    assert save_waypoints._default_waypoint_id(1) == "POI_012"
+    assert save_waypoints._default_waypoint_id(2) == "POI_013"
     assert save_waypoints._default_waypoint_name(1) == "wp_01"
     assert save_waypoints._default_waypoint_name(2) == "wp_02"
 
@@ -41,7 +44,7 @@ def test_serialize_waypoints_yaml_preserves_map_header_and_overwrites_waypoints(
     )
     waypoints = [
         {
-            "id": "POI_013",
+            "id": "POI_012",
             "name": "wp_01",
             "frame_id": "map",
             "position": {"x": 1.0, "y": 2.0, "z": 0.0},
@@ -57,6 +60,6 @@ def test_serialize_waypoints_yaml_preserves_map_header_and_overwrites_waypoints(
 
     assert "serialized_prefix" in rendered
     assert "old_wp" not in rendered
-    assert "POI_013" in rendered
+    assert "POI_012" in rendered
     assert "wp_01" in rendered
     assert rendered.count("waypoints:") == 1

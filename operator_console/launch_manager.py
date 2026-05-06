@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import time
+import shlex
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
@@ -58,6 +59,18 @@ DEFAULT_ESTOP_COMMAND = (
 )
 WAYPOINT_TEMPLATE_TOKEN = "{{waypoint}}"
 ESTOP_TIMEOUT_SECONDS = 6.0
+DEFAULT_DEBUG_BAG_COMMAND = (
+    "/home/unitree/ros_ws/src/go2w_real/scripts/"
+    "navigate_to_waypoint_with_debug_bag.sh"
+)
+DEFAULT_DEBUG_PROFILES = ["zt_0", "14_1"]
+DEFAULT_FOXGLOVE_PORT = 8765
+DEFAULT_FOXGLOVE_URL = (
+    "https://app.foxglove.dev/~/view"
+    "?ds=foxglove-websocket&ds.url=ws://{{host}}:{{foxglove_port}}"
+)
+DEFAULT_RVIZ_URL = "http://{{host}}:6080/vnc.html?autoconnect=true&resize=remote"
+SAFE_TOKEN_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:/")
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +113,58 @@ def load_profiles(path: Path) -> dict:
             "navigate_command": navigate_command,
             "estop_command": estop_command,
         },
+        "debug_navigation": _load_debug_navigation_config(data),
+        "visualization": _load_visualization_config(data),
+    }
+
+
+def _load_debug_navigation_config(data: dict) -> dict:
+    raw_cfg = data.get("debug_navigation") or {}
+    allowed_profiles = raw_cfg.get("allowed_profiles", DEFAULT_DEBUG_PROFILES)
+    if not isinstance(allowed_profiles, list) or not allowed_profiles:
+        raise ValueError("debug_navigation.allowed_profiles must be a non-empty list")
+
+    command = str(raw_cfg.get("command", DEFAULT_DEBUG_BAG_COMMAND)).strip()
+    if not command:
+        raise ValueError("debug_navigation.command is required")
+
+    default_profile = str(
+        raw_cfg.get("default_profile", allowed_profiles[0])
+    ).strip()
+    if default_profile not in allowed_profiles:
+        raise ValueError("debug_navigation.default_profile must be allowed")
+
+    defaults = raw_cfg.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise ValueError("debug_navigation.defaults must be a mapping")
+
+    waypoint_files = raw_cfg.get("waypoint_files") or {}
+    if not isinstance(waypoint_files, dict):
+        raise ValueError("debug_navigation.waypoint_files must be a mapping")
+    resolved_waypoint_files = {
+        str(profile).strip(): os.path.expanduser(str(path).strip())
+        for profile, path in waypoint_files.items()
+        if str(path).strip()
+    }
+
+    return {
+        "command": os.path.expanduser(command),
+        "allowed_profiles": [str(profile).strip() for profile in allowed_profiles],
+        "default_profile": default_profile,
+        "waypoint_files": resolved_waypoint_files,
+        "defaults": defaults,
+    }
+
+
+def _load_visualization_config(data: dict) -> dict:
+    raw_cfg = data.get("visualization") or {}
+    foxglove_port = int(raw_cfg.get("foxglove_port", DEFAULT_FOXGLOVE_PORT))
+    return {
+        "foxglove_port": foxglove_port,
+        "foxglove_url": str(
+            raw_cfg.get("foxglove_url", DEFAULT_FOXGLOVE_URL)
+        ).strip(),
+        "rviz_url": str(raw_cfg.get("rviz_url", DEFAULT_RVIZ_URL)).strip(),
     }
 
 
@@ -850,6 +915,317 @@ class NavigationDispatcher:
         self._stop_current_locked_external(reason="launch_manager shutdown")
 
 
+def _is_safe_token(value: str) -> bool:
+    return bool(value) and all(char in SAFE_TOKEN_CHARS for char in value)
+
+
+def _optional_float(
+    request: dict,
+    key: str,
+    flag: str,
+    *,
+    minimum: float = 0.0,
+    maximum: float = 10000.0,
+) -> list[str]:
+    if key not in request or request.get(key) in (None, ""):
+        return []
+    try:
+        value = float(request[key])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be numeric") from exc
+    if value < minimum or value > maximum:
+        raise ValueError(f"{key} out of range")
+    return [flag, str(request[key])]
+
+
+def _optional_int(
+    request: dict,
+    key: str,
+    flag: str,
+    *,
+    minimum: int = 0,
+    maximum: int = 10000,
+) -> list[str]:
+    if key not in request or request.get(key) in (None, ""):
+        return []
+    try:
+        value = int(request[key])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be an integer") from exc
+    if value < minimum or value > maximum:
+        raise ValueError(f"{key} out of range")
+    return [flag, str(value)]
+
+
+def build_debug_bag_args(
+    command: str,
+    *,
+    allowed_profiles: list[str],
+    profile_waypoint_files: dict[str, str],
+    request: dict,
+) -> list[str]:
+    profile = str(request.get("profile", allowed_profiles[0])).strip()
+    if profile not in allowed_profiles:
+        raise ValueError(f"unknown debug profile: {profile}")
+
+    args = [command, "--profile", profile]
+    waypoint_file = str(profile_waypoint_files.get(profile, "")).strip()
+    if waypoint_file:
+        args += ["--waypoint-file", waypoint_file]
+
+    if bool(request.get("no_bringup", False)):
+        args.append("--no-bringup")
+
+    args += _optional_float(
+        request, "nav_ready_timeout", "--nav-ready-timeout", minimum=1.0
+    )
+    args += _optional_float(
+        request, "tf_ready_timeout", "--tf-ready-timeout", minimum=0.1
+    )
+    args += _optional_float(
+        request, "scan_ready_timeout", "--scan-ready-timeout", minimum=0.1
+    )
+    args += _optional_float(
+        request, "scan_ready_min_hz", "--scan-ready-min-hz", minimum=0.1
+    )
+    args += _optional_float(
+        request, "xt16_ready_timeout", "--xt16-ready-timeout", minimum=0.1
+    )
+    args += _optional_float(
+        request, "xt16_ready_min_hz", "--xt16-ready-min-hz", minimum=0.1
+    )
+    args += _optional_int(
+        request, "xt16_ready_restarts", "--xt16-ready-restarts", minimum=0
+    )
+
+    navigate_args: list[str] = []
+    target_id = str(request.get("target_id", "")).strip()
+    sequence = str(request.get("waypoint_sequence", "")).strip()
+    all_waypoints = bool(request.get("all_waypoints", False))
+
+    selected_modes = sum(bool(value) for value in (target_id, sequence, all_waypoints))
+    if selected_modes != 1:
+        raise ValueError(
+            "select exactly one debug navigation target: target_id, "
+            "waypoint_sequence, or all_waypoints"
+        )
+
+    if target_id:
+        if not _is_safe_token(target_id):
+            raise ValueError("target_id contains unsupported characters")
+        navigate_args += ["--waypoint", target_id]
+    elif sequence:
+        if any(not _is_safe_token(item.strip()) for item in sequence.split(",")):
+            raise ValueError("waypoint_sequence contains unsupported characters")
+        navigate_args += ["--waypoint-sequence", sequence]
+    elif all_waypoints:
+        navigate_args.append("--all-waypoints")
+
+    navigate_args += _optional_float(
+        request, "near_goal_distance", "--near-goal-distance", minimum=0.01
+    )
+    navigate_args += _optional_float(
+        request,
+        "success_check_distance",
+        "--success-check-distance",
+        minimum=0.01,
+    )
+    navigate_args += _optional_float(
+        request,
+        "success_check_timeout",
+        "--success-check-timeout",
+        minimum=0.0,
+    )
+    navigate_args += _optional_int(
+        request,
+        "abort_replan_retries",
+        "--abort-replan-retries",
+        minimum=0,
+    )
+    navigate_args += _optional_float(
+        request,
+        "batch_inter_goal_delay",
+        "--batch-inter-goal-delay",
+        minimum=0.0,
+    )
+    if bool(request.get("use_waypoint_yaw", False)):
+        navigate_args.append("--use-waypoint-yaw")
+    if bool(request.get("continue_on_failure", False)):
+        navigate_args.append("--continue-on-failure")
+
+    return args + ["--"] + navigate_args
+
+
+class DebugBagDispatcher:
+    """Runs one navigate_to_waypoint_with_debug_bag.sh task at a time."""
+
+    def __init__(self, config: dict):
+        self.config = config
+        self._lock = threading.Lock()
+        self._process: Optional[subprocess.Popen] = None
+        self._reader: Optional[threading.Thread] = None
+        self._monitor: Optional[threading.Thread] = None
+        self._log_buffer: collections.deque = collections.deque(
+            maxlen=NAV_LOG_BUFFER_MAX
+        )
+        self._state = "idle"
+        self._started_at: Optional[datetime.datetime] = None
+        self._finished_at: Optional[datetime.datetime] = None
+        self._exit_code: Optional[int] = None
+        self._last_error: Optional[str] = None
+        self._last_request: dict = {}
+        self._last_command: list[str] = []
+
+    def start(self, request: dict) -> dict:
+        with self._lock:
+            if self._process is not None and self._process.poll() is None:
+                return {"ok": False, "error": "debug navigation is already running"}
+
+        merged_request = dict(self.config.get("defaults", {}))
+        merged_request.update(request or {})
+        if "profile" not in merged_request:
+            merged_request["profile"] = self.config["default_profile"]
+
+        try:
+            argv = build_debug_bag_args(
+                self.config["command"],
+                allowed_profiles=self.config["allowed_profiles"],
+                profile_waypoint_files=self.config.get("waypoint_files", {}),
+                request=merged_request,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        run_env = os.environ.copy()
+        run_env.update(
+            {
+                key: str(value)
+                for key, value in (self.config.get("env") or {}).items()
+            }
+        )
+
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=run_env,
+                start_new_session=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+        with self._lock:
+            self._process = process
+            self._state = "running"
+            self._started_at = datetime.datetime.now(datetime.timezone.utc)
+            self._finished_at = None
+            self._exit_code = None
+            self._last_error = None
+            self._last_request = merged_request
+            self._last_command = argv
+            self._log_buffer.clear()
+            self._reader = threading.Thread(
+                target=self._read_output,
+                args=(process,),
+                name="debug-bag-reader",
+                daemon=True,
+            )
+            self._monitor = threading.Thread(
+                target=self._monitor_exit,
+                args=(process,),
+                name="debug-bag-monitor",
+                daemon=True,
+            )
+            self._reader.start()
+            self._monitor.start()
+
+        return {"ok": True, "pid": process.pid, "argv": argv}
+
+    def cancel(self, reason: str = "user cancel") -> dict:
+        with self._lock:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return {"ok": True, "message": "No active debug navigation"}
+
+        _terminate_process_group(process, grace_seconds=5.0)
+        with self._lock:
+            if self._process is process:
+                self._state = "canceled"
+                self._finished_at = datetime.datetime.now(datetime.timezone.utc)
+                self._exit_code = process.returncode
+                self._last_error = f"canceled: {reason}"
+        return {"ok": True, "message": f"Canceled debug navigation ({reason})"}
+
+    def status(self) -> dict:
+        with self._lock:
+            if (
+                self._state in ("running", "starting")
+                and self._process is not None
+                and self._process.poll() is not None
+            ):
+                self._state = "succeeded" if self._process.returncode == 0 else "failed"
+                self._finished_at = datetime.datetime.now(datetime.timezone.utc)
+                self._exit_code = self._process.returncode
+
+            result: dict = {
+                "state": self._state,
+                "request": self._last_request,
+            }
+            if self._process is not None and self._process.poll() is None:
+                result["pid"] = self._process.pid
+            if self._started_at:
+                result["started_at"] = self._started_at.isoformat()
+            if self._finished_at:
+                result["finished_at"] = self._finished_at.isoformat()
+            if self._started_at and self._state in ("starting", "running"):
+                result["uptime_seconds"] = round(
+                    (
+                        datetime.datetime.now(datetime.timezone.utc)
+                        - self._started_at
+                    ).total_seconds(),
+                    1,
+                )
+            if self._exit_code is not None:
+                result["exit_code"] = self._exit_code
+            if self._last_error:
+                result["error"] = self._last_error
+            if self._last_command:
+                result["command"] = shlex.join(self._last_command)
+            return result
+
+    def logs(self, tail: int = 100) -> list:
+        with self._lock:
+            return list(self._log_buffer)[-tail:]
+
+    def shutdown(self):
+        self.cancel(reason="launch_manager shutdown")
+
+    def _read_output(self, process: subprocess.Popen):
+        assert process.stdout is not None
+        try:
+            for raw_line in process.stdout:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+                with self._lock:
+                    self._log_buffer.append(line)
+        except Exception:
+            pass
+
+    def _monitor_exit(self, process: subprocess.Popen):
+        returncode = process.wait()
+        with self._lock:
+            if self._process is not process:
+                return
+            if self._state == "canceled":
+                return
+            self._finished_at = datetime.datetime.now(datetime.timezone.utc)
+            self._exit_code = returncode
+            self._state = "succeeded" if returncode == 0 else "failed"
+            if returncode != 0:
+                self._last_error = f"process exited with code {returncode}"
+
+
 def _shell_escape(value: str) -> str:
     safe = all(
         c.isalnum() or c in ("_", "-", ".", "/", ":", "+", "=")
@@ -869,6 +1245,8 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
     manager: ProcessManager
     profiles: dict
     navigator: NavigationDispatcher
+    debug_navigator: DebugBagDispatcher
+    visualization: dict
 
     def log_message(self, fmt, *args):
         logger.debug(fmt, *args)
@@ -925,7 +1303,31 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
             for name in self.profiles:
                 services[name] = self.manager.get_or_create(name).state
             services["_navigation"] = self.navigator.status().get("state", "idle")
+            services["_debug_navigation"] = self.debug_navigator.status().get(
+                "state", "idle"
+            )
             self._send_json({"ok": True, "services": services})
+            return
+
+        if path == "/api/config":
+            self._send_json(
+                {
+                    "ok": True,
+                    "visualization": self.visualization,
+                    "debug_navigation": {
+                        "allowed_profiles": self.debug_navigator.config[
+                            "allowed_profiles"
+                        ],
+                        "default_profile": self.debug_navigator.config[
+                            "default_profile"
+                        ],
+                        "waypoint_files": self.debug_navigator.config.get(
+                            "waypoint_files", {}
+                        ),
+                        "defaults": self.debug_navigator.config.get("defaults", {}),
+                    },
+                }
+            )
             return
 
         if path == "/api/profiles":
@@ -976,7 +1378,14 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/waypoints":
-            wp_file = self.navigator.default_waypoint_file
+            requested_profile = query.get("profile", "")
+            wp_file = ""
+            if requested_profile:
+                wp_file = self.debug_navigator.config.get(
+                    "waypoint_files", {}
+                ).get(requested_profile, "")
+            if not wp_file:
+                wp_file = self.navigator.default_waypoint_file
             if not wp_file:
                 self._send_json(
                     {"ok": False, "error": "no waypoint_file configured"}, 500
@@ -1015,6 +1424,17 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
         if path == "/api/nav/logs":
             tail = int(query.get("tail", "100"))
             self._send_json({"ok": True, "lines": self.navigator.logs(tail=tail)})
+            return
+
+        if path == "/api/debug/status":
+            self._send_json({"ok": True, **self.debug_navigator.status()})
+            return
+
+        if path == "/api/debug/logs":
+            tail = int(query.get("tail", "100"))
+            self._send_json(
+                {"ok": True, "lines": self.debug_navigator.logs(tail=tail)}
+            )
             return
 
         self._send_json({"ok": False, "error": "Not found"}, 404)
@@ -1086,9 +1506,22 @@ class LaunchManagerHandler(BaseHTTPRequestHandler):
         if path == "/api/nav/estop":
             # Nuclear E-STOP: kills every running profile AND publishes
             # Twist(0) to /cmd_vel in parallel. See NavigationDispatcher.estop.
+            self.debug_navigator.cancel(reason="E-STOP")
             result = self.navigator.estop(stack_manager=self.manager)
             status_code = 200 if result.get("ok") else 500
             self._send_json(result, status_code)
+            return
+
+        if path == "/api/debug/start":
+            body = self._read_body()
+            result = self.debug_navigator.start(body)
+            status_code = 200 if result.get("ok") else 409
+            self._send_json(result, status_code)
+            return
+
+        if path == "/api/debug/cancel":
+            result = self.debug_navigator.cancel(reason="user cancel")
+            self._send_json(result)
             return
 
         self._send_json({"ok": False, "error": "Not found"}, 404)
@@ -1136,6 +1569,8 @@ def main():
     loaded = load_profiles(args.profiles)
     profiles = loaded["profiles"]
     nav_cfg = loaded["navigation"]
+    debug_nav_cfg = loaded["debug_navigation"]
+    visualization_cfg = loaded["visualization"]
     logger.info(
         "Loaded %d profiles: %s", len(profiles), ", ".join(profiles.keys())
     )
@@ -1157,6 +1592,7 @@ def main():
         default_waypoint_file=waypoint_file,
         estop_command=nav_cfg.get("estop_command", DEFAULT_ESTOP_COMMAND),
     )
+    debug_navigator = DebugBagDispatcher(debug_nav_cfg)
     web_dir = args.web_dir
 
     class Handler(LaunchManagerHandler):
@@ -1165,6 +1601,8 @@ def main():
     Handler.manager = manager
     Handler.profiles = profiles
     Handler.navigator = navigator
+    Handler.debug_navigator = debug_navigator
+    Handler.visualization = visualization_cfg
 
     _orig_do_GET = Handler.do_GET
 
@@ -1210,9 +1648,14 @@ def main():
 
     def shutdown_handler(signum, frame):
         logger.info("Shutting down...")
+        debug_navigator.shutdown()
         navigator.shutdown()
         manager.stop_all()
-        server.shutdown()
+        threading.Thread(
+            target=server.shutdown,
+            name="launch-manager-shutdown",
+            daemon=True,
+        ).start()
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
@@ -1222,6 +1665,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        debug_navigator.shutdown()
         navigator.shutdown()
         manager.stop_all()
         server.server_close()

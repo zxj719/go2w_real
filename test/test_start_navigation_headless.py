@@ -32,11 +32,11 @@ def test_headless_config_cli_prints_shell_assignments():
     assert "HEADLESS_PROFILE=zt_0" in output
     assert "HEADLESS_CLEANUP_MATCHERS=(" in output
     assert (
-        "HEADLESS_SERVER_URI=ws://192.168.123.186:8100/ws/navigation/executor"
+        "HEADLESS_SERVER_URI=ws://172.16.22.205:8101/ws/navigation/executor"
         in output
     )
     assert "HEADLESS_USE_ODOM_FUSION=1" in output
-    assert "HEADLESS_RECORD_BAG=1" in output
+    assert "HEADLESS_RECORD_BAG=0" in output
 
 
 def test_headless_start_script_help_prefers_config_and_profile():

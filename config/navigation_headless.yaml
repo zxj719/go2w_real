@@ -40,10 +40,11 @@ slam_localization:
   loop_match_minimum_response_fine: 0.6
 
 executor:
-  server_uri: ws://192.168.123.186:8100/ws/navigation/executor
+  # server_uri: ws://192.168.123.186:8100/ws/navigation/executor
+  server_uri: ws://172.16.22.205:8101/ws/navigation/executor
   server_timeout: 10.0
   heartbeat_interval: 30.0
   reconnect_delay: 3.0
   nav_event_timeout: 15.0
   show_logs: true
-  record_bag: true
+  record_bag: false

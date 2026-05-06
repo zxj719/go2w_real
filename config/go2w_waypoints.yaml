@@ -3,29 +3,107 @@ map:
   data: '/home/unitree/ros_ws/src/go2w_real/map/14_1.data'
   posegraph: '/home/unitree/ros_ws/src/go2w_real/map/14_1.posegraph'
 waypoints:
-  - id: 'POI_001'
+  - id: 'POI_012'
     name: 'wp_01'
     frame_id: 'map'
     position:
-      x: 2.780894
-      y: 3.171834
-      z: 0.000641
-    yaw: 0.641873
+      x: 1.257757
+      y: 0.043028
+      z: 0.000000
+    yaw: 0.015023
     orientation:
       x: 0.000000
       y: 0.000000
-      z: 0.315455
-      w: 0.948940
-  - id: 'POI_002'
+      z: 0.007511
+      w: 0.999972
+  - id: 'POI_013'
     name: 'wp_02'
     frame_id: 'map'
     position:
-      x: 4.061498
-      y: 1.890769
-      z: 0.004547
-    yaw: -2.792814
+      x: 3.776187
+      y: 0.628593
+      z: 0.000000
+    yaw: 0.076440
     orientation:
       x: 0.000000
       y: 0.000000
-      z: -0.984833
-      w: 0.173507
+      z: 0.038211
+      w: 0.999270
+  - id: 'POI_014'
+    name: 'wp_03'
+    frame_id: 'map'
+    position:
+      x: 5.596112
+      y: 1.295340
+      z: 0.000000
+    yaw: 1.214707
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.570696
+      w: 0.821161
+  - id: 'POI_015'
+    name: 'wp_04'
+    frame_id: 'map'
+    position:
+      x: 3.755161
+      y: 2.392114
+      z: 0.000000
+    yaw: 2.717507
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.977603
+      w: 0.210457
+  - id: 'POI_016'
+    name: 'wp_05'
+    frame_id: 'map'
+    position:
+      x: 2.716325
+      y: 3.683185
+      z: 0.000000
+    yaw: 2.714030
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.977236
+      w: 0.212157
+  - id: 'POI_017'
+    name: 'wp_06'
+    frame_id: 'map'
+    position:
+      x: 2.070178
+      y: 2.080035
+      z: 0.000000
+    yaw: -1.842013
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.796211
+      w: 0.605019
+  - id: 'POI_018'
+    name: 'wp_07'
+    frame_id: 'map'
+    position:
+      x: 1.829091
+      y: 0.289523
+      z: 0.000000
+    yaw: -1.682427
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: -0.745453
+      w: 0.666559
+  - id: 'POI_019'
+    name: 'wp_08'
+    frame_id: 'map'
+    position:
+      x: 0.424200
+      y: -0.056957
+      z: 0.000000
+    yaw: 3.028573
+    orientation:
+      x: 0.000000
+      y: 0.000000
+      z: 0.998404
+      w: 0.056480
